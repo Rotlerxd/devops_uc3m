@@ -35,6 +35,11 @@ function Calculator() {
   const performOperation = (nextOperation) => {
     const inputValue = parseFloat(display);
 
+    if (display === 'Error') {
+      clear();
+      return;
+    }
+
     if (previousValue === null) {
       setPreviousValue(inputValue);
     } else if (operation) {
@@ -42,7 +47,7 @@ function Calculator() {
       const newValue = calculate(currentValue, inputValue, operation);
 
       setDisplay(String(newValue));
-      setPreviousValue(newValue);
+      setPreviousValue(newValue === 'Error' ? null : newValue);
     }
 
     setWaitingForOperand(true);
@@ -58,6 +63,9 @@ function Calculator() {
       case '*':
         return leftOperand * rightOperand;
       case '/':
+        if (rightOperand === 0) {
+          return 'Error';
+        }
         return leftOperand / rightOperand;
       case '=':
         return rightOperand;
@@ -68,6 +76,11 @@ function Calculator() {
 
   const equals = () => {
     const inputValue = parseFloat(display);
+
+    if (display === 'Error') {
+      clear();
+      return;
+    }
 
     if (previousValue !== null && operation) {
       const newValue = calculate(previousValue, inputValue, operation);
