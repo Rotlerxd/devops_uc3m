@@ -1,0 +1,101 @@
+.calculator {
+  margin: 0 auto;
+  width: 320px;
+  background: #1e1e1e;
+  border-radius: 20px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  padding: 20px;
+}
+
+.calculator-display {
+  background: #000;
+  color: #fff;
+  font-size: 48px;
+  text-align: right;
+  padding: 20px;
+  border-radius: 10px;
+  margin-bottom: 20px;
+  font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  min-height: 70px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  overflow: hidden;
+  word-wrap: break-word;
+}
+
+.calculator-keypad {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.calculator-row {
+  display: flex;
+  gap: 12px;
+}
+
+.calculator-key {
+  flex: 1;
+  height: 65px;
+  border: none;
+  border-radius: 50%;
+  font-size: 24px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: #505050;
+  color: #fff;
+  font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.calculator-key:hover {
+  opacity: 0.8;
+  transform: scale(1.05);
+}
+
+.calculator-key:active {
+  transform: scale(0.95);
+}
+
+.key-clear,
+.key-sign,
+.key-percent {
+  background: #a5a5a5;
+  color: #000;
+}
+
+.key-operator {
+  background: #ff9500;
+  color: #fff;
+}
+
+.key-equals {
+  background: #ff9500;
+  color: #fff;
+  flex: 2;
+  border-radius: 32px;
+}
+
+.key-zero {
+  flex: 2;
+  border-radius: 32px;
+}
+
+@media (max-width: 400px) {
+  .calculator {
+    width: 280px;
+    padding: 15px;
+  }
+
+  .calculator-display {
+    font-size: 36px;
+    padding: 15px;
+    min-height: 60px;
+  }
+
+  .calculator-key {
+    height: 55px;
+    font-size: 20px;
+  }
+}
