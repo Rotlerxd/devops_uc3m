@@ -43,6 +43,7 @@ jobs:
       - name: Run tests
         run: |
           cd calculator-app
+          # --passWithNoTests allows CI to pass even when no tests exist
           npm test -- --watchAll=false --passWithNoTests
       
       # Build the project
