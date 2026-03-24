@@ -10,8 +10,7 @@
 
 ## Contexto
 
-El proyecto requiere dos sistemas de gestión de datos diferenciados (según el
-enunciado, sección 4):
+El proyecto requiere dos sistemas de gestión de datos diferenciados:
 
 1. Un **sistema gestor de datos para las entidades del sistema** (usuarios,
    alertas, fuentes RSS, roles, notificaciones).
