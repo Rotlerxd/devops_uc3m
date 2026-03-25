@@ -111,6 +111,12 @@ Las decisiones de arquitectura están documentadas como ADRs en `/docs/adr/`:
 | [0004](adr/0004-orm-sqlalchemy-asincrono-postgresql.md) | ORM: SQLAlchemy 2.0 asíncrono + PostgreSQL 15 | Aceptado |
 | [0005](adr/0005-frontend-react-vite.md) | Frontend: React 19 + Vite | Aceptado |
 | [0006](adr/0006-elasticsearch-indexacion-noticias.md) | Motor de búsqueda: Elasticsearch 8.12 | Aceptado |
+| [0007](adr/0007-frontend-bootstrap-react-router.md) | UI: Bootstrap 5 + React Router | Aceptado |
+| [0008](adr/0008-calidad-codigo-ruff-ty.md) | Calidad: Ruff + Ty | Aceptado |
+| [0009](adr/0009-estrategia-testing-pytest-vitest-playwright.md) | Testing: Pytest + Vitest + Playwright | Aceptado |
+| [0010](adr/0010-migraciones-bd-alembic.md) | Migraciones: Alembic | Aceptado |
+| [0011](adr/0011-pipeline-cicd-github-actions.md) | CI/CD: GitHub Actions | Aceptado |
+| [0012](adr/0012-seguridad-scanning-pip-audit-trivy-sonarqube.md) | Seguridad: pip-audit + Trivy + SonarQube | Aceptado |
 
 ---
 
