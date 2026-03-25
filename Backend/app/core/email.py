@@ -1,13 +1,13 @@
 import os
 import smtplib
-from email.mime.text import MIMEText
+from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
-from jose import jwt
+from email.mime.text import MIMEText
 from pathlib import Path
 
-from app.core.security import SECRET_KEY, ALGORITHM
+from jose import jwt
+
+from app.core.security import ALGORITHM, SECRET_KEY
 
 # 1. Calculamos la ruta absoluta a la raíz de tu proyecto
 # __file__ es app/core/email.py
@@ -15,23 +15,24 @@ from app.core.security import SECRET_KEY, ALGORITHM
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 env_path = BASE_DIR / ".env"
 
-# 2. Obligamos a cargar ESE archivo exacto
-load_dotenv(dotenv_path=env_path)
+# 2. No longer loading .env here — rely on env vars set by the caller
+
 
 def create_verification_token(email: str) -> str:
     """Genera un token JWT que caduca en 24 horas para verificar el email."""
-    expire = datetime.utcnow() + timedelta(hours=24)
+    expire = datetime.now(timezone.utc) + timedelta(hours=24)  # noqa: UP017
     to_encode = {"sub": email, "exp": expire, "type": "email_verification"}
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
 
 def send_verification_email(email: str, token: str):
     """
     Construye y envía el email de verificación usando la librería estándar smtplib.
-    Al no ser 'async def', FastAPI la ejecutará automáticamente en un hilo 
+    Al no ser 'async def', FastAPI la ejecutará automáticamente en un hilo
     secundario (Threadpool) gracias a BackgroundTasks, sin bloquear la API.
     """
     link = f"http://localhost:8000/api/v1/auth/verify/{token}"
-    
+
     html = f"""
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2>¡Bienvenido a NewsRadar!</h2>
@@ -41,21 +42,18 @@ def send_verification_email(email: str, token: str):
         <p><small>Si el botón no funciona, copia y pega este enlace en tu navegador:<br>{link}</small></p>
     </div>
     """
-    
+
     # 1. Construimos el mensaje
     msg = MIMEMultipart()
-    msg['From'] = os.getenv("MAIL_FROM", "noreply@newsradar.com")
-    msg['To'] = email
-    msg['Subject'] = "Verifica tu cuenta en NewsRadar"
-    msg.attach(MIMEText(html, 'html'))
-    
+    msg["From"] = os.getenv("MAIL_FROM", "noreply@newsradar.com")
+    msg["To"] = email
+    msg["Subject"] = "Verifica tu cuenta en NewsRadar"
+    msg.attach(MIMEText(html, "html"))
+
     # 2. Nos conectamos al SMTP de Mailtrap y enviamos
     try:
-        server = smtplib.SMTP(
-            os.getenv("MAIL_SERVER", "sandbox.smtp.mailtrap.io"), 
-            int(os.getenv("MAIL_PORT", 2525))
-        )
-        server.login(os.getenv("MAIL_USERNAME"), os.getenv("MAIL_PASSWORD"))
+        server = smtplib.SMTP(os.getenv("MAIL_SERVER", "sandbox.smtp.mailtrap.io"), int(os.getenv("MAIL_PORT", 2525)))
+        server.login(os.getenv("MAIL_USERNAME", ""), os.getenv("MAIL_PASSWORD", ""))
         server.send_message(msg)
         server.quit()
     except Exception as e:

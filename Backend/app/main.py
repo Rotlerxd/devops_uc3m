@@ -1,27 +1,28 @@
-from fastapi import FastAPI
-from app.api.v1.auth import router as auth_router
-from app.api.v1.users import router as users_router
-from app.api.v1.alerts import router as alerts_router
-from app.api.v1.sources import router as sources_router
 from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
 from sqlalchemy import text
-from app.api.v1 import auth
-from app.core.database import engine, es_client, Base  
-from app.models.usuario import Usuario
+
+from app.api.v1.alerts import router as alerts_router
+from app.api.v1.auth import router as auth_router
+from app.api.v1.sources import router as sources_router
+from app.api.v1.users import router as users_router
+from app.core.database import Base, engine, es_client
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- Lógica de STARTUP (antes del yield) ---
     print("Iniciando pruebas de conexión a bases de datos...")
-    
+
     # 1. Probar conexión a PostgreSQL
     try:
         async with engine.begin() as conn:
             await conn.execute(text("SELECT 1"))
-            
+
             print("Verificando y creando tablas en PostgreSQL...")
             await conn.run_sync(Base.metadata.create_all)
-            
+
         print("Conexión a PostgreSQL exitosa")
     except Exception as e:
         print(f"Error conectando a PostgreSQL: {e}")
@@ -40,13 +41,14 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
     await es_client.close()
 
+
 app = FastAPI(
     title="NEWSRADAR API",
     description="API REST para el sistema de monitorización de noticias NEWSRADAR",
     version="1.0.0",
     docs_url="/docs",
     openapi_url="/openapi.json",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Incluimos los routers de los diferentes módulos
@@ -54,6 +56,7 @@ app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(users_router, prefix="/api/v1/users", tags=["users"])
 app.include_router(alerts_router, prefix="/api/v1/alerts", tags=["alerts"])
 app.include_router(sources_router, prefix="/api/v1/sources", tags=["sources"])
+
 
 @app.get("/health")
 async def health_check():
@@ -63,11 +66,10 @@ async def health_check():
 # docker build -t fastapi-backend .
 # docker run -p 8000:8000 fastapi-backend
 
-# python -m uvicorn app.main:app --reload 
+# python -m uvicorn app.main:app --reload
 # en \Backend (root)
 
 
 @app.get("/")
 async def root():
     return {"message": "NEWSRADAR Backend is running and connected to databases"}
-

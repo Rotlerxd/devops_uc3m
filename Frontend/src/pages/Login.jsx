@@ -1,4 +1,5 @@
-// Pantalla de Login 
+// Pantalla de Login
+import React from 'react';
 import { Link } from 'react-router-dom';
 
 export default function Login() {
