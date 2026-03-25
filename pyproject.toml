@@ -1,0 +1,84 @@
+[project]
+name = "newsradar"
+version = "1.0.0"
+description = "NEWSRADAR - Sistema de monitorización de noticias"
+requires-python = ">=3.11"
+
+# ---------------------------------------------------------------------------
+# Ruff — linting + formatting
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["Backend"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "F",      # pyflakes
+    "I",      # isort
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "SIM",    # flake8-simplify
+    "W",      # pycodestyle warnings
+    "RUF",    # ruff-specific rules
+]
+ignore = [
+    "E501",   # line too long — formatter handles this
+    "B008",   # function call in default argument (FastAPI Depends pattern)
+    "SIM108", # ternary operator — sometimes less readable
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["Backend/tests"]
+markers = [
+    "unit: isolated unit tests (no external services)",
+    "integration: tests requiring PostgreSQL or Elasticsearch",
+    "e2e: end-to-end tests (Playwright, full stack)",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+# ---------------------------------------------------------------------------
+# Coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["Backend/app"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__pycache__/*",
+    "*/alembic/*",
+    "*/scripts/*",
+]
+
+[tool.coverage.report]
+fail_under = 60
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
+
+# ---------------------------------------------------------------------------
+# Ty — static type checking
+# ---------------------------------------------------------------------------
+[tool.ty.rules]
+# SQLAlchemy sessionmaker + AsyncSession overload resolution is a known
+# limitation of the type stubs; suppress until upstream fixes it.
+no-matching-overload = "ignore"

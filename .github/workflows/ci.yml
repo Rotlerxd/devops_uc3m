@@ -1,0 +1,345 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '20'
+
+jobs:
+  # ──────────────────────────────────────────────
+  #  1. Backend lint (Ruff)
+  # ──────────────────────────────────────────────
+  backend-lint:
+    name: Backend — Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install Ruff
+        run: pip install ruff
+      - name: Ruff check
+        run: ruff check Backend/
+      - name: Ruff format check
+        run: ruff format --check Backend/
+
+  # ──────────────────────────────────────────────
+  #  2. Backend type checking (Ty)
+  # ──────────────────────────────────────────────
+  backend-typecheck:
+    name: Backend — Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: |
+          pip install -r Backend/requirements.txt
+          pip install ty
+      - name: Run Ty
+        run: ty check Backend/app/
+
+  # ──────────────────────────────────────────────
+  #  3. Backend unit tests
+  # ──────────────────────────────────────────────
+  backend-unit:
+    name: Backend — Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: Backend/requirements*.txt
+      - name: Install dependencies
+        run: |
+          pip install -r Backend/requirements.txt
+          pip install -r Backend/requirements-dev.txt
+      - name: Run unit tests
+        run: |
+          cd Backend
+          pytest tests/unit -v --tb=short -m unit \
+            --cov=app --cov-report=xml:coverage.xml --cov-report=term-missing
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: Backend/coverage.xml
+
+  # ──────────────────────────────────────────────
+  #  4. Backend integration tests
+  # ──────────────────────────────────────────────
+  backend-integration:
+    name: Backend — Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: newsradar_admin
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: newsradar_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U newsradar_admin -d newsradar_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: 'false'
+          ES_JAVA_OPTS: '-Xms512m -Xmx512m'
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd="curl -f http://localhost:9200/_cluster/health || exit 1"
+          --health-interval=15s
+          --health-timeout=10s
+          --health-retries=10
+    env:
+      DATABASE_URL: postgresql+asyncpg://newsradar_admin:test_password@localhost:5432/newsradar_test
+      TEST_DATABASE_URL: postgresql+asyncpg://newsradar_admin:test_password@localhost:5432/newsradar_test
+      ELASTIC_URL: http://localhost:9200
+      SECRET_KEY: ci-test-secret-key-not-for-production
+      MAIL_SERVER: localhost
+      MAIL_PORT: '2525'
+      MAIL_USERNAME: test
+      MAIL_PASSWORD: test
+      MAIL_FROM: test@newsradar.local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: Backend/requirements*.txt
+      - name: Install dependencies
+        run: |
+          pip install -r Backend/requirements.txt
+          pip install -r Backend/requirements-dev.txt
+      - name: Run integration tests
+        run: |
+          cd Backend
+          pytest tests/integration -v --tb=short -m integration
+
+  # ──────────────────────────────────────────────
+  #  5. Frontend tests (Vitest)
+  # ──────────────────────────────────────────────
+  frontend-test:
+    name: Frontend — Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: Frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Run Vitest
+        run: npm run test:run
+      - name: Build check
+        run: npm run build
+
+  # ──────────────────────────────────────────────
+  #  6. E2E tests (Playwright)
+  # ──────────────────────────────────────────────
+  e2e:
+    name: E2E — Playwright
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: newsradar_admin
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: newsradar_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U newsradar_admin -d newsradar_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: postgresql+asyncpg://newsradar_admin:test_password@localhost:5432/newsradar_test
+      ELASTIC_URL: http://localhost:9200
+      SECRET_KEY: ci-test-secret-key-not-for-production
+      MAIL_SERVER: localhost
+      MAIL_PORT: '2525'
+      MAIL_USERNAME: test
+      MAIL_PASSWORD: test
+      MAIL_FROM: test@newsradar.local
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: Frontend/package-lock.json
+
+      - name: Install backend dependencies
+        run: |
+          pip install -r Backend/requirements.txt
+          pip install -r Backend/requirements-dev.txt
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: Frontend
+
+      - name: Install Playwright
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+        working-directory: e2e
+
+      - name: Start backend
+        run: |
+          cd Backend
+          uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+          sleep 5
+
+      - name: Start frontend
+        run: |
+          cd Frontend
+          npm run dev &
+          sleep 5
+
+      - name: Run Playwright tests
+        run: npx playwright test
+        working-directory: e2e
+        env:
+          BASE_URL: http://localhost:5173
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+
+  # ──────────────────────────────────────────────
+  #  7. Security scans
+  # ──────────────────────────────────────────────
+  security:
+    name: Security — Dependency Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: Frontend/package-lock.json
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Audit Python dependencies
+        run: pip-audit -r Backend/requirements.txt
+        continue-on-error: true
+
+      - name: Install frontend deps
+        run: npm ci
+        working-directory: Frontend
+      - name: Audit Node dependencies
+        run: npm audit --production
+        working-directory: Frontend
+        continue-on-error: true
+
+  # ──────────────────────────────────────────────
+  #  8. Docker image build
+  # ──────────────────────────────────────────────
+  docker-build:
+    name: Docker — Build Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t newsradar-backend:ci Backend/
+
+  # ──────────────────────────────────────────────
+  #  9. SonarQube analysis
+  # ──────────────────────────────────────────────
+  sonarqube:
+    name: SonarQube — Analysis
+    runs-on: ubuntu-latest
+    needs: [backend-unit, frontend-test]
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: Backend/requirements*.txt
+
+      - name: Install test deps and generate coverage
+        run: |
+          pip install -r Backend/requirements.txt
+          pip install -r Backend/requirements-dev.txt
+          cd Backend && pytest tests/unit tests/integration -m "unit or integration" \
+            --cov=app --cov-report=xml:../coverage.xml --tb=short || true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: Frontend/package-lock.json
+
+      - name: Frontend coverage
+        run: |
+          cd Frontend && npm ci && npm run test:run -- --coverage || true
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        continue-on-error: true
+
+  # ──────────────────────────────────────────────
+  #  10. Container scan (Trivy)
+  # ──────────────────────────────────────────────
+  trivy-scan:
+    name: Security — Container Scan
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image for scanning
+        run: docker build -t newsradar-backend:scan Backend/
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'newsradar-backend:scan'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+        continue-on-error: true
