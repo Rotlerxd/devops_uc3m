@@ -1,43 +1,138 @@
-from datetime import datetime, timedelta, timezone
-from typing import Optional
-from jose import jwt
-from passlib.context import CryptContext
 import os
+import smtplib
+from email.message import EmailMessage
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from datetime import datetime, timedelta, timezone
+from jose import jwt, JWTError
+from dotenv import load_dotenv, find_dotenv
+from pathlib import Path
+from app.db.database import get_db
+from app.db import models
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
+import os
+# Cargar variables de entorno desde el archivo .env
+load_dotenv(find_dotenv())
 
-# 1. Variables de entorno (¡En producción esto va en un archivo .env que no se sube a GitHub!)
-# TODO Esta es la llave maestra que firma los tokens. Si alguien la roba, puede falsificar sesiones.
-SECRET_KEY = os.getenv("SECRET_KEY", "clave_secreta_para_desarrollo_newsradar")
+SECRET_KEY = os.getenv("SECRET_KEY", "newsradar_secret_key_temporal")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30 # El token caducará en media hora por seguridad
+VERIFICATION_TOKEN_EXPIRE_HOURS = 24
 
-# 2. Configuración del motor de encriptación (bcrypt)
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+MAILTRAP_HOST = os.getenv("MAILTRAP_HOST", "sandbox.smtp.mailtrap.io")
+MAILTRAP_PORT = int(os.getenv("MAILTRAP_PORT", 2525))
+MAILTRAP_USER = os.getenv("MAIL_USERNAME")
+MAILTRAP_PASS = os.getenv("MAIL_PASSWORD")
 
-# --- FUNCIONES DE CONTRASEÑAS ---
+def create_verification_token(email: str) -> str:
+    """Genera un JWT con el email del usuario y una caducidad de 24 horas."""
+    expire = datetime.now(timezone.utc) + timedelta(hours=VERIFICATION_TOKEN_EXPIRE_HOURS)
+    to_encode = {"exp": expire, "sub": email}
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-def get_password_hash(password: str) -> str:
-    """Recibe la contraseña en texto plano y devuelve el hash irrompible."""
-    return pwd_context.hash(password)
+def send_verification_email(to_email: str, token: str):
+    """Envía el correo de verificación usando el SMTP de Mailtrap."""
+    print(f"DEBUG - Intentando conectar a {MAILTRAP_HOST}:{MAILTRAP_PORT}")
+    print(f"DEBUG - Usuario Mailtrap: {MAILTRAP_USER}")
+    
+    msg = MIMEMultipart()
+    msg['Subject'] = "NEWSRADAR - Verifica tu cuenta"
+    msg['From'] = "noreply@newsradar.com"
+    msg['To'] = to_email
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Compara la contraseña plana que llega del login con el hash de la base de datos."""
-    return pwd_context.verify(plain_password, hashed_password)
+    # Enlace hacia nuestro futuro endpoint de verificación
+    verification_link = f"http://localhost:8000/api/v1/auth/verify?token={token}"
+    
+    html = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>¡Bienvenido a NewsRadar!</h2>
+        <p>Gracias por registrarte. Para poder empezar a usar tu cuenta, necesitamos que verifiques tu dirección de correo electrónico.</p>
+        <p>Por favor, haz clic en el siguiente botón:</p>
+        <a href="{verification_link}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Verificar mi cuenta</a>
+        <p><small>Si el botón no funciona, copia y pega este enlace en tu navegador:<br>{verification_link}</small></p>
+    </div>
+    """
+    msg.attach(MIMEText(html, 'html'))
+    try:
+        with smtplib.SMTP(MAILTRAP_HOST, MAILTRAP_PORT) as server:
+            server.ehlo()
+            server.starttls()
+            
+            server.login(MAILTRAP_USER, MAILTRAP_PASS)
+            server.send_message(msg)
+            print(f"Correo de verificación enviado a {to_email}")
+    except Exception as e:
+        print(f"Error al enviar el correo: {e}")
+    
+    
+    
+# Añade esto en app/core/security.py
 
-# --- FUNCIONES DE TOKENS JWT ---
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """Genera un token firmado criptográficamente con los datos del usuario."""
+def create_access_token(data: dict) -> str:
+    """Genera el JWT de sesión para el usuario."""
     to_encode = data.copy()
-    
-    # Configuramos cuándo caduca el token
-    if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
-    else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    
-    # Añadimos la fecha de expiración ('exp' es una palabra reservada del estándar JWT)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
-    
-    # Firmamos el token con nuestra SECRET_KEY
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+    
+    
+    
+
+security = HTTPBearer()
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security), 
+    db: Session = Depends(get_db)
+):
+    # El token ahora se extrae así:
+    token = credentials.credentials
+    
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Token inválido o expirado",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(
+            token, 
+            os.getenv("SECRET_KEY", "tu_clave_secreta"), 
+            algorithms=["HS256"]
+        )
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+        
+    # Buscamos al usuario en la base de datos
+    user = db.query(models.User).filter(models.User.email == email).first()
+    if user is None:
+        raise credentials_exception
+        
+    return user
+
+def require_role(required_role: str):
+    """
+    Fábrica de dependencias. Devuelve una función que verifica 
+    si el usuario actual tiene el rol especificado.
+    """
+    def role_checker(current_user: models.User = Depends(get_current_user)):
+        # Extraemos los nombres de los roles que tiene el usuario
+        user_roles = [role.name for role in current_user.roles]
+        
+        if required_role not in user_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes permisos suficientes para realizar esta acción"
+            )
+        return current_user
+    
+    return role_checker
+
+# Creamos atajos limpios para usarlos directamente en los endpoints
+get_current_admin = require_role("Admin")
+get_current_manager = require_role("Gestor")
