@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 env:
   PYTHON_VERSION: '3.11'
@@ -109,15 +110,14 @@ jobs:
           --health-timeout=10s
           --health-retries=10
     env:
-      DATABASE_URL: postgresql+asyncpg://newsradar_admin:test_password@localhost:5432/newsradar_test
-      TEST_DATABASE_URL: postgresql+asyncpg://newsradar_admin:test_password@localhost:5432/newsradar_test
+      DATABASE_URL: postgresql+psycopg2://newsradar_admin:test_password@localhost:5432/newsradar_test
+      TEST_DATABASE_URL: postgresql+psycopg2://newsradar_admin:test_password@localhost:5432/newsradar_test
       ELASTIC_URL: http://localhost:9200
       SECRET_KEY: ci-test-secret-key-not-for-production
-      MAIL_SERVER: localhost
-      MAIL_PORT: '2525'
+      MAILTRAP_HOST: localhost
+      MAILTRAP_PORT: '2525'
       MAIL_USERNAME: test
       MAIL_PASSWORD: test
-      MAIL_FROM: test@newsradar.local
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -178,10 +178,10 @@ jobs:
           --health-timeout=5s
           --health-retries=5
     env:
-      DATABASE_URL: postgresql+asyncpg://newsradar_admin:test_password@localhost:5432/newsradar_test
+      DATABASE_URL: postgresql+psycopg2://newsradar_admin:test_password@localhost:5432/newsradar_test
       ELASTIC_URL: http://localhost:9200
       SECRET_KEY: ci-test-secret-key-not-for-production
-      MAIL_SERVER: localhost
+      MAILTRAP_HOST: localhost
       MAIL_PORT: '2525'
       MAIL_USERNAME: test
       MAIL_PASSWORD: test

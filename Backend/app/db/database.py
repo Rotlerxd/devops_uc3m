@@ -2,7 +2,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 # URL de conexión (coincide con los credenciales del docker-compose.yml)
-SQLALCHEMY_DATABASE_URL = "postgresql://newsradar_user:newsradar_password@localhost:5432/newsradar_db"
+SQLALCHEMY_DATABASE_URL = "postgresql+psycopg2://newsradar_user:newsradar_password@localhost:5432/newsradar_db"
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

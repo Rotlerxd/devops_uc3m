@@ -13,7 +13,7 @@ from app.main import app
 # Test database URL — uses env var or falls back to docker-compose defaults
 TEST_DATABASE_URL = os.getenv(
     "TEST_DATABASE_URL",
-    "postgresql://newsradar_user:newsradar_password@localhost:5432/newsradar_db",
+    "postgresql+psycopg2://newsradar_user:newsradar_password@localhost:5432/newsradar_db",
 )
 
 test_engine = create_engine(TEST_DATABASE_URL, echo=False)
