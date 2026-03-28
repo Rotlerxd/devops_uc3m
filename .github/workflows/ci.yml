@@ -130,6 +130,8 @@ jobs:
           pip install -r Backend/requirements.txt
           pip install -r Backend/requirements-dev.txt
       - name: Run integration tests
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg2://newsradar_admin:test_password@localhost:5432/newsradar_test
         run: |
           cd Backend
           pytest tests/integration -v --tb=short -m integration
