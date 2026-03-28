@@ -2,7 +2,7 @@
 
 - **Estado:** Aceptado
 - **Fecha:** 2026-03-25
-- **Autores:** Equipo DevOps (NEWSRADAR)
+- **Autores:** Equipo DevOps (Konstantin Rannev, Álvaro Rodriguez)
 - **Reemplaza a:** —
 - **Reemplazado por:** —
 - **Relacionado con:** [ADR 0008](0008-calidad-codigo-ruff-ty.md), [ADR 0009](0009-estrategia-testing-pytest-vitest-playwright.md)

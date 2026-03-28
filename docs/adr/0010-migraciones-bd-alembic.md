@@ -2,7 +2,7 @@
 
 - **Estado:** Aceptado
 - **Fecha:** 2026-03-25
-- **Autores:** Equipo DevOps (NEWSRADAR)
+- **Autores:** Equipo DevOps (Konstantin Rannev, Álvaro Rodriguez)
 - **Reemplaza a:** —
 - **Reemplazado por:** —
 - **Relacionado con:** [ADR 0004](0004-orm-sqlalchemy-asincrono-postgresql.md)

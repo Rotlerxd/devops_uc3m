@@ -2,7 +2,7 @@
 
 - **Estado:** Aceptado
 - **Fecha:** 2026-03-25
-- **Autores:** Equipo DevOps (NEWSRADAR)
+- **Autores:** Equipo DevOps (Konstantin Rannev, Álvaro Rodriguez)
 - **Reemplaza a:** —
 - **Reemplazado por:** —
 - **Relacionado con:** [ADR 0001](0001-framework-backend-fastapi.md), [ADR 0005](0005-frontend-react-vite.md)

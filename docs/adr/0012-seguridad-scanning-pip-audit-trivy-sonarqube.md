@@ -2,7 +2,7 @@
 
 - **Estado:** Aceptado
 - **Fecha:** 2026-03-25
-- **Autores:** Equipo DevOps (NEWSRADAR)
+- **Autores:** Equipo DevOps (Konstantin Rannev, Álvaro Rodriguez)
 - **Reemplaza a:** —
 - **Reemplazado por:** —
 - **Relacionado con:** [ADR 0011](0011-pipeline-cicd-github-actions.md)
