@@ -5,8 +5,8 @@ services:
     image: postgres:15-alpine
     container_name: newsradar_postgres
     environment:
-      POSTGRES_USER: newsradar_admin
-      POSTGRES_PASSWORD: super_secret_password
+      POSTGRES_USER: newsradar_user
+      POSTGRES_PASSWORD: newsradar_password
       POSTGRES_DB: newsradar_db
     ports:
       - "5432:5432" # Mapeamos el puerto para que FastAPI pueda acceder desde fuera del contenedor

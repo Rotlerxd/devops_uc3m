@@ -1,25 +1,11 @@
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Response, status
-from fastapi.security import HTTPBearer
-from jose import JWTError, jwt
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field, HttpUrl
-from sqlalchemy.orm import Session
-
-from app.core.security import (
-    create_access_token,
-    create_verification_token,
-    get_current_admin,
-    get_current_user,
-    get_password_hash,
-    send_verification_email,
-    verify_password,
-)
-from app.db import models
-from app.db.database import SessionLocal, engine, get_db
 
 app = FastAPI(
     title="NewsRadar API",
@@ -294,57 +280,47 @@ def sanitize_user(user: UserInDB) -> User:
     )
 
 
-#
-# def get_current_user(
-#     credentials: HTTPAuthorizationCredentials = Depends(security),
-# ) -> UserInDB:
-#     if credentials is None or credentials.scheme.lower() != "bearer":
-#         raise HTTPException(status_code=401, detail="Token inválido o ausente")
-#
-#     user_id = active_tokens.get(credentials.credentials)
-#     if not user_id:
-#         raise HTTPException(status_code=401, detail="Token inválido o expirado")
-#
-#     user = users_store.get(user_id)
-#     if not user:
-#         raise HTTPException(status_code=401, detail="Usuario inválido")
-#
-#     return user
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> UserInDB:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Token inválido o ausente")
+
+    user_id = active_tokens.get(credentials.credentials)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Token inválido o expirado")
+
+    user = users_store.get(user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="Usuario inválido")
+
+    return user
 
 
 def create_seed_data() -> None:
-    db = SessionLocal()
-    try:
-        # Comprobamos si ya existen roles para no duplicarlos
-        if not db.query(models.Role).first():
-            roles = [models.Role(name="Admin"), models.Role(name="Gestor"), models.Role(name="Lector")]
-            db.add_all(roles)
-            db.commit()
+    if roles_store:
+        return
 
-        # Comprobamos si existe el usuario admin inicial
-        admin_user = db.query(models.User).filter(models.User.email == "admin@newsradar.com").first()
-        if not admin_user:
-            admin_role = db.query(models.Role).filter(models.Role.name == "Admin").first()
-            hashed_pwd = get_password_hash("admin123")  # Contraseña por defecto
+    admin_role_id = next_id("roles")
+    roles_store[admin_role_id] = Role(id=admin_role_id, name="admin")
 
-            new_admin = models.User(
-                email="admin@newsradar.com",
-                first_name="Admin",
-                last_name="NewsRadar",
-                organization="NewsRadar",
-                hashed_password=hashed_pwd,
-                is_verified=True,  # El admin ya nace verificado
-            )
-            new_admin.roles.append(admin_role)
-            db.add(new_admin)
-            db.commit()
-    finally:
-        db.close()
+    user_role_id = next_id("roles")
+    roles_store[user_role_id] = Role(id=user_role_id, name="user")
+
+    admin_user_id = next_id("users")
+    users_store[admin_user_id] = UserInDB(
+        id=admin_user_id,
+        email="admin@newsradar.com",
+        first_name="Admin",
+        last_name="NewsRadar",
+        organization="NewsRadar",
+        role_ids=[admin_role_id],
+        password="admin123",
+    )
 
 
 @app.on_event("startup")
 def on_startup() -> None:
-    models.Base.metadata.create_all(bind=engine)
     create_seed_data()
 
 
@@ -354,193 +330,69 @@ def health() -> dict:
 
 
 @app.post(f"{API_PREFIX}/auth/login", response_model=TokenResponse, tags=["auth"])
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.email == payload.email).first()
+def login(payload: LoginRequest) -> TokenResponse:
+    user = next((u for u in users_store.values() if u.email == payload.email), None)
+    if user is None or user.password != payload.password:
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
-    if not user or not verify_password(payload.password, user.hashed_password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas")
-
-    # 3. Verificar si ha activado la cuenta
-    # if not user.is_verified:
-    #     raise HTTPException(
-    #         status_code=status.HTTP_403_FORBIDDEN,
-    #         detail="Cuenta no verificada. Por favor, revisa tu correo electrónico."
-    #     )
-
-    user_roles = [role.name for role in user.roles]
-
-    token_data = {"sub": user.email, "roles": user_roles}
-    access_token = create_access_token(data=token_data)
-
-    return {"access_token": access_token, "token_type": "bearer"}
+    token = str(uuid4())
+    active_tokens[token] = user.id
+    return TokenResponse(access_token=token)
 
 
-@app.post(f"{API_PREFIX}/auth/register", response_model=User, status_code=201, tags=["auth"])
-def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
-    # 1. Comprobar si el email ya existe en PostgreSQL
-    db_user = db.query(models.User).filter(models.User.email == payload.email).first()
-    if db_user:
+@app.post(f"{API_PREFIX}/auth/register", response_model=User, tags=["auth"])
+def register(payload: UserCreate) -> User:
+    if any(user.email == payload.email for user in users_store.values()):
         raise HTTPException(status_code=409, detail="El email ya está registrado")
 
-    # 2. Encriptar la contraseña
-    hashed_password = get_password_hash(payload.password)
+    ensure_role_ids_exist(payload.role_ids)
 
-    # 3. Crear el nuevo usuario (por defecto le damos el rol Lector)
-    new_user = models.User(
-        email=payload.email,
-        first_name=payload.first_name,
-        last_name=payload.last_name,
-        organization=payload.organization,
-        hashed_password=hashed_password,
-        is_verified=False,  # Debe verificar su email con Mailtrap
-    )
-
-    # Asignar rol "Lector" por defecto
-    lector_role = db.query(models.Role).filter(models.Role.name == "Lector").first()
-    if lector_role:
-        new_user.roles.append(lector_role)
-
-    # 4. Guardar en base de datos
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-
-    token = create_verification_token(new_user.email)
-    send_verification_email(new_user.email, token)
-
-    # 5. Mapear al esquema Pydantic de salida
-    return new_user
-
-
-# NUEVO ENDPOINT PARA VERIFICAR CUENTA CON TOKEN
-@app.get(f"{API_PREFIX}/auth/verify", tags=["auth"])
-def verify_email(token: str, db: Session = Depends(get_db)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Token de verificación inválido o expirado",
-    )
-    try:
-        # Decodificamos el token (fallará automáticamente si pasaron 24h)
-        payload = jwt.decode(token, os.getenv("SECRET_KEY", "newsradar_secret_key_temporal"), algorithms=["HS256"])
-        email: str = payload.get("sub")
-        if email is None:
-            raise credentials_exception from None
-    except JWTError:
-        raise credentials_exception from None
-
-    # Buscamos al usuario en la BD
-    user = db.query(models.User).filter(models.User.email == email).first()
-    if user is None:
-        raise credentials_exception from None
-
-    if user.is_verified:
-        return {"msg": "El usuario ya estaba verificado"}
-
-    # Actualizamos el estado a verificado
-    user.is_verified = True
-    db.commit()
-
-    return {"msg": "Cuenta verificada con éxito. Ya puedes iniciar sesión."}
-
-
-# NUEVO ENDPOINT PARA OBTENR DATOS DEL USUARIO LOGUEADO
-@app.get(f"{API_PREFIX}/users/me", tags=["users"], response_model=User)
-def read_users_me(current_user: models.User = Depends(get_current_user)):
-    """Devuelve los datos del usuario logueado."""
-    return current_user
-
-
-# CRUD USUARIOS
+    user_id = next_id("users")
+    user_db = UserInDB(id=user_id, **payload.model_dump())
+    users_store[user_id] = user_db
+    return sanitize_user(user_db)
 
 
 @app.get(f"{API_PREFIX}/users", response_model=list[User], tags=["users"])
-def list_users(
-    db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),  # Bloqueado solo para Admins
-) -> list[User]:
-    return db.query(models.User).all()
+def list_users(_: UserInDB = Depends(get_current_user)) -> list[User]:
+    return [sanitize_user(user) for user in users_store.values()]
 
 
 @app.post(f"{API_PREFIX}/users", response_model=User, status_code=201, tags=["users"])
-def create_user(
-    payload: UserCreate, db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)
-) -> User:
-    # 1. Verificar colisión de emails
-    if db.query(models.User).filter(models.User.email == payload.email).first():
+def create_user(payload: UserCreate, _: UserInDB = Depends(get_current_user)) -> User:
+    if any(user.email == payload.email for user in users_store.values()):
         raise HTTPException(status_code=409, detail="El email ya está registrado")
 
-    # 2. Reemplazo de `ensure_role_ids_exist` en BD real
-    roles = db.query(models.Role).filter(models.Role.id.in_(payload.role_ids)).all()
-    if len(roles) != len(payload.role_ids):
-        raise HTTPException(status_code=404, detail="Uno o más roles no existen")
-
-    # 3. Preparar el usuario (Hasheando la contraseña)
-    hashed_pwd = get_password_hash(payload.password)
-    user_data = payload.model_dump(exclude={"password", "role_ids"})
-
-    user_db = models.User(**user_data, hashed_password=hashed_pwd)
-    user_db.roles = roles  # Asignamos la relación many-to-many de roles
-
-    db.add(user_db)
-    db.commit()
-    db.refresh(user_db)
-
-    return user_db
+    ensure_role_ids_exist(payload.role_ids)
+    user_id = next_id("users")
+    user_db = UserInDB(id=user_id, **payload.model_dump())
+    users_store[user_id] = user_db
+    return sanitize_user(user_db)
 
 
 @app.get(f"{API_PREFIX}/users/{{user_id}}", response_model=User, tags=["users"])
-def get_user(user_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)) -> User:
-    user = db.query(models.User).filter(models.User.id == user_id).first()
+def get_user(user_id: int, _: UserInDB = Depends(get_current_user)) -> User:
+    user = users_store.get(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    return user
+    return sanitize_user(user)
 
 
 @app.put(f"{API_PREFIX}/users/{{user_id}}", response_model=User, tags=["users"])
-def update_user(
-    user_id: int, payload: UserUpdate, db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)
-) -> User:
-    user = db.query(models.User).filter(models.User.id == user_id).first()
+def update_user(user_id: int, payload: UserUpdate, _: UserInDB = Depends(get_current_user)) -> User:
+    user = users_store.get(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     data = payload.model_dump(exclude_unset=True)
-
-    # Verificar colisión de email si se intenta cambiar
-    if "email" in data:
-        email_collision = (
-            db.query(models.User).filter(models.User.email == data["email"], models.User.id != user_id).first()
-        )
-        if email_collision:
-            raise HTTPException(status_code=409, detail="El email ya está registrado")
-
-    # Actualizar roles si vienen en el payload
-    # if "role_ids" in data:
-    #     roles = db.query(models.Role).filter(models.Role.id.in_(data["role_ids"])).all()
-    #     if len(roles) != len(data["role_ids"]):
-    #          raise HTTPException(status_code=404, detail="Uno o más roles no existen")
-    #     user.roles = roles
-    #     del data["role_ids"]
-
-    # Actualizar contraseña si viene en el payload
-    if "password" in data:
-        user.hashed_password = get_password_hash(data["password"])
-        del data["password"]
-
+    if "email" in data and any(u.email == data["email"] and u.id != user_id for u in users_store.values()):
+        raise HTTPException(status_code=409, detail="El email ya está registrado")
     if "role_ids" in data:
-        roles = db.query(models.Role).filter(models.Role.id.in_(data["role_ids"])).all()
-        if len(roles) != len(data["role_ids"]):
-            raise HTTPException(status_code=404, detail="Uno o más roles no existen")
-        user.roles = roles
-        data.pop("role_ids", None)
+        ensure_role_ids_exist(data["role_ids"])
 
-    # Actualizar el resto de campos dinámicamente
-    for key, value in data.items():
-        setattr(user, key, value)
-
-    db.commit()
-    db.refresh(user)
-    return user
+    updated = user.model_copy(update=data)
+    users_store[user_id] = updated
+    return sanitize_user(updated)
 
 
 @app.delete(
@@ -550,67 +402,49 @@ def update_user(
     response_class=Response,
     tags=["users"],
 )
-def delete_user(user_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)) -> None:
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
+def delete_user(user_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+    if user_id not in users_store:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    # Nota sobre el borrado en cascada:
-    # Al usar PostgreSQL + SQLAlchemy, si tus modelos (Alerts, Notifications)
-    # tienen configurado el borrado en cascada (ondelete="CASCADE"),
-    # la base de datos se encarga automáticamente de borrar todo lo asociado a este usuario.
-    db.delete(user)
-    db.commit()
+    alert_ids = [alert.id for alert in alerts_store.values() if alert.user_id == user_id]
+    for alert_id in alert_ids:
+        notification_ids = [n.id for n in notifications_store.values() if n.alert_id == alert_id]
+        for notification_id in notification_ids:
+            notifications_store.pop(notification_id, None)
+        alerts_store.pop(alert_id, None)
 
-
-# --- FIN CRUD USUARIOS
-
-# --- CRUD ROLES
+    users_store.pop(user_id, None)
 
 
 @app.get(f"{API_PREFIX}/roles", response_model=list[Role], tags=["roles"])
-def list_roles(db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)) -> list[Role]:
-    return db.query(models.Role).all()
+def list_roles(_: UserInDB = Depends(get_current_user)) -> list[Role]:
+    return list(roles_store.values())
 
 
 @app.post(f"{API_PREFIX}/roles", response_model=Role, status_code=201, tags=["roles"])
-def create_role(
-    payload: RoleCreate, db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)
-) -> Role:
-    # verificar si ya existe un rol con ese nombre para evitar duplicados
-    if db.query(models.Role).filter(models.Role.name == payload.name).first():
-        raise HTTPException(status_code=409, detail="El rol ya existe")
-
-    new_role = models.Role(**payload.model_dump())
-    db.add(new_role)
-    db.commit()
-    db.refresh(new_role)
-    return new_role
+def create_role(payload: RoleCreate, _: UserInDB = Depends(get_current_user)) -> Role:
+    role_id = next_id("roles")
+    role = Role(id=role_id, **payload.model_dump())
+    roles_store[role_id] = role
+    return role
 
 
 @app.get(f"{API_PREFIX}/roles/{{role_id}}", response_model=Role, tags=["roles"])
-def get_role(role_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)) -> Role:
-    role = db.query(models.Role).filter(models.Role.id == role_id).first()
+def get_role(role_id: int, _: UserInDB = Depends(get_current_user)) -> Role:
+    role = roles_store.get(role_id)
     if not role:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
     return role
 
 
 @app.put(f"{API_PREFIX}/roles/{{role_id}}", response_model=Role, tags=["roles"])
-def update_role(
-    role_id: int, payload: RoleUpdate, db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)
-) -> Role:
-    role = db.query(models.Role).filter(models.Role.id == role_id).first()
+def update_role(role_id: int, payload: RoleUpdate, _: UserInDB = Depends(get_current_user)) -> Role:
+    role = roles_store.get(role_id)
     if not role:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
-
-    update_data = payload.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(role, key, value)
-
-    db.commit()
-    db.refresh(role)
-    return role
+    updated = role.model_copy(update=payload.model_dump(exclude_unset=True))
+    roles_store[role_id] = updated
+    return updated
 
 
 @app.delete(
@@ -620,22 +454,18 @@ def update_role(
     response_class=Response,
     tags=["roles"],
 )
-def delete_role(role_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)) -> None:
-    role = db.query(models.Role).filter(models.Role.id == role_id).first()
-    if not role:
+def delete_role(role_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+    if role_id not in roles_store:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
 
-    # Respetamos tu lógica de evitar borrar roles en uso.
-    # Comprobamos si hay algún usuario que tenga este rol asignado.
-    users_with_role = db.query(models.User).filter(models.User.roles.any(id=role_id)).first()
-    if users_with_role:
-        raise HTTPException(status_code=409, detail="No se puede eliminar un rol asignado a usuarios")
+    for user in users_store.values():
+        if role_id in user.role_ids:
+            raise HTTPException(
+                status_code=409,
+                detail="No se puede eliminar un rol asignado a usuarios",
+            )
 
-    db.delete(role)
-    db.commit()
-
-
-# --- FIN CRUD ROLES
+    roles_store.pop(role_id, None)
 
 
 @app.get(

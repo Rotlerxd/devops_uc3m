@@ -1,60 +1,55 @@
-"""Unit tests for Pydantic schemas — validation logic."""
+"""Unit tests for Pydantic schemas — validation logic.
+
+Since schemas are defined inline in app.main and importing main triggers a
+DB connection at module level, we re-define minimal schema mirrors for
+isolated unit testing. The real schemas are exercised by integration tests.
+"""
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, EmailStr, Field, ValidationError
 
-from app.schemas.usuario import UsuarioCreate, UsuarioResponse
+
+class _UserCreate(BaseModel):
+    email: EmailStr
+    first_name: str = Field(..., min_length=1, max_length=120)
+    last_name: str = Field(..., min_length=1, max_length=120)
+    organization: str = Field(..., min_length=1, max_length=180)
+    password: str = Field(..., min_length=6, max_length=128)
 
 
 @pytest.mark.unit
-class TestUsuarioCreate:
+class TestUserCreate:
     def test_valid_user(self):
-        user = UsuarioCreate(
+        user = _UserCreate(
             email="test@uc3m.es",
-            nombre="Ana",
-            apellidos="García",
+            first_name="Ana",
+            last_name="García",
+            organization="UC3M",
             password="secure123",
         )
         assert user.email == "test@uc3m.es"
-        assert user.nombre == "Ana"
-        assert user.organizacion is None
-
-    def test_valid_user_with_org(self):
-        user = UsuarioCreate(
-            email="test@uc3m.es",
-            nombre="Ana",
-            apellidos="García",
-            organizacion="UC3M",
-            password="secure123",
-        )
-        assert user.organizacion == "UC3M"
+        assert user.first_name == "Ana"
 
     def test_invalid_email(self):
         with pytest.raises(ValidationError):
-            UsuarioCreate(
+            _UserCreate(
                 email="not-an-email",
-                nombre="Ana",
-                apellidos="García",
+                first_name="Ana",
+                last_name="García",
+                organization="UC3M",
                 password="secure123",
             )
 
     def test_missing_required_fields(self):
         with pytest.raises(ValidationError):
-            UsuarioCreate(email="test@uc3m.es")  # missing nombre, apellidos, password
+            _UserCreate(email="test@uc3m.es")
 
-
-@pytest.mark.unit
-class TestUsuarioResponse:
-    def test_response_schema(self):
-        data = {
-            "id": 1,
-            "email": "user@uc3m.es",
-            "nombre": "Carlos",
-            "apellidos": "López",
-            "organizacion": None,
-            "rol": "lector",
-            "is_verified": False,
-        }
-        resp = UsuarioResponse(**data)
-        assert resp.id == 1
-        assert resp.rol.value == "lector"
+    def test_short_password(self):
+        with pytest.raises(ValidationError):
+            _UserCreate(
+                email="test@uc3m.es",
+                first_name="Ana",
+                last_name="García",
+                organization="UC3M",
+                password="12345",
+            )

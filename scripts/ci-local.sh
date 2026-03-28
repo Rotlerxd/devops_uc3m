@@ -48,7 +48,11 @@ echo "━━━ [5/6] Security Scan ━━━"
 # 6. Docker build
 echo ""
 echo "━━━ [6/6] Docker Build ━━━"
-docker build -t newsradar-backend:ci Backend/ || FAIL=1
+if docker info >/dev/null 2>&1; then
+	docker build -t newsradar-backend:ci Backend/ || FAIL=1
+else
+	echo "  SKIPPED — Docker daemon not accessible (permission denied or not running)"
+fi
 
 echo ""
 echo "════════════════════════════════════════"

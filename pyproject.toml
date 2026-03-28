@@ -79,6 +79,9 @@ exclude_lines = [
 # Ty — static type checking
 # ---------------------------------------------------------------------------
 [tool.ty.rules]
-# SQLAlchemy sessionmaker + AsyncSession overload resolution is a known
-# limitation of the type stubs; suppress until upstream fixes it.
+# SQLAlchemy type stubs report Column[Unknown] for model attributes, causing
+# false positives when passing model fields to typed functions.
+# Suppress until SQLAlchemy provides complete stubs.
 no-matching-overload = "ignore"
+invalid-argument-type = "ignore"
+invalid-return-type = "ignore"

@@ -44,7 +44,7 @@ test-frontend: ## Run frontend unit tests
 	cd $(FRONTEND_DIR) && $(NPM) run test:run
 
 test-e2e: ## Run end-to-end tests
-	cd $(E2E_DIR) && $(NPM) test
+	cd $(E2E_DIR) && $(NPM) install --silent && npx playwright install --with-deps chromium 2>/dev/null; $(NPM) test
 
 coverage: ## Run backend tests with coverage report
 	cd $(BACKEND_DIR) && $(PYTHON) -m pytest tests/unit tests/integration \
