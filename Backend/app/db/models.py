@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Table
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Table, JSON
 from sqlalchemy.orm import relationship
 
 from app.db.database import Base
@@ -35,3 +35,33 @@ class User(Base):
     def role_ids(self):
         """Extrae automáticamente los IDs de los roles para que Pydantic los lea"""
         return [role.id for role in self.roles]
+
+    
+class Source(Base):
+    __tablename__ = "sources"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(150), unique=True, nullable=False, index=True)
+    description = Column(String(500), nullable=True)
+    
+    channels = relationship("RssChannel", back_populates="source", cascade="all, delete-orphan")
+
+class RssChannel(Base):
+    __tablename__ = "rss_channels"
+    id = Column(Integer, primary_key=True, index=True)
+    source_id = Column(Integer, ForeignKey("sources.id"), nullable=False)
+    name = Column(String(150), nullable=False)
+    url = Column(String, unique=True, nullable=False, index=True)
+    category = Column(String(100), nullable=False) # Para mapear luego con IPTC
+    
+    source = relationship("Source", back_populates="channels")
+    
+    
+class Alert(Base):
+    __tablename__ = "alerts"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String(100), nullable=False)  # Palabra clave principal
+    cron_expression = Column(String(50), nullable=False)
+    descriptors = Column(JSON, nullable=False)  # Lista de 3 a 10 sinónimos
+    categories = Column(JSON, nullable=False) # Lista de categorías IPTC
+    owner = relationship("User", backref="alerts")

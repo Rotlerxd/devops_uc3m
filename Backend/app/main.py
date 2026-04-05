@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
-
+import requests
+from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.security import HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field, HttpUrl
 from sqlalchemy.orm import Session
-
+import json
 from app.core.security import (
     create_access_token,
     create_verification_token,
@@ -247,9 +248,18 @@ def ensure_role_ids_exist(role_ids: list[int]) -> None:
         )
 
 
-def ensure_user_exists(user_id: int) -> None:
-    if user_id not in users_store:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+# def ensure_user_exists(user_id: int) -> None:
+#     if user_id not in users_store:
+#         raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+def ensure_user_exists(user_id: int, db: Session):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Usuario no encontrado"
+        )
+    return user
 
 
 def ensure_alert_for_user(user_id: int, alert_id: int) -> Alert:
@@ -282,7 +292,7 @@ def ensure_rss_for_source(source_id: int, channel_id: int) -> RSSChannel:
         raise HTTPException(status_code=404, detail="Canal RSS no encontrado para la fuente")
     return channel
 
-
+# REVISAR RETURS EN CRUD
 def sanitize_user(user: UserInDB) -> User:
     return User(
         id=user.id,
@@ -340,12 +350,46 @@ def create_seed_data() -> None:
             db.commit()
     finally:
         db.close()
-
+        
+def load_seed_data():
+    """Lee el JSON e inserta fuentes y canales si no existen."""
+    db = SessionLocal()
+    try:
+        # Solo insertamos si la tabla de fuentes está vacía
+        if not db.query(models.Source).first():
+            
+            base_dir = Path(__file__).resolve().parent
+            seed_file = base_dir / "data" / "rss_seed.json"
+            if os.path.exists(seed_file):
+                with open(seed_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    
+                for source_data in data:
+                    new_source = models.Source(
+                        name=source_data["source_name"],
+                        description=source_data.get("description", "")
+                    )
+                    db.add(new_source)
+                    db.flush() # Para obtener el ID de la fuente inmediatamente
+                    
+                    for channel_data in source_data["channels"]:
+                        new_channel = models.RssChannel(
+                            source_id=new_source.id,
+                            name=channel_data["name"],
+                            url=channel_data["url"],
+                            category=channel_data["category"]
+                        )
+                        db.add(new_channel)
+                db.commit()
+                print("Semilla de 100 canales cargada correctamente en Postgres.")
+    finally:
+        db.close()
 
 @app.on_event("startup")
 def on_startup() -> None:
     models.Base.metadata.create_all(bind=engine)
     create_seed_data()
+    load_seed_data()
 
 
 @app.get(f"{API_PREFIX}/health", tags=["system"])
@@ -636,7 +680,7 @@ def delete_role(role_id: int, db: Session = Depends(get_db), _: models.User = De
 
 
 # --- FIN CRUD ROLES
-
+# --- CRUD USER ALERTS
 
 @app.get(
     f"{API_PREFIX}/users/{{user_id}}/alerts",
@@ -654,12 +698,46 @@ def list_user_alerts(user_id: int, _: UserInDB = Depends(get_current_user)) -> l
     status_code=201,
     tags=["alerts"],
 )
-def create_user_alert(user_id: int, payload: AlertCreate, _: UserInDB = Depends(get_current_user)) -> Alert:
-    ensure_user_exists(user_id)
-    alert_id = next_id("alerts")
-    alert = Alert(id=alert_id, user_id=user_id, **payload.model_dump())
-    alerts_store[alert_id] = alert
-    return alert
+def create_user_alert(
+        user_id: int, payload: AlertCreate, current_user: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
+    ) -> Alert:
+    ensure_user_exists(user_id, db)
+
+    if current_user.id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="No tienes permisos para crear alertas para otro usuario."
+        )
+
+    # Validar límite de 20 alertas
+    current_alerts_count = db.query(models.Alert).filter(models.Alert.user_id == user_id).count()
+    if current_alerts_count >= 20:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Límite máximo de 20 alertas alcanzado."
+        )
+
+    # Validar regla de negocio: entre 3 y 10 descriptores (vienen del payload)
+    if len(payload.descriptors) < 3 or len(payload.descriptors) > 10:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La alerta debe tener entre 3 y 10 descriptores (sinónimos)."
+        )
+
+    # Creación en PostgreSQL asumiendo que models.Alert tiene columnas JSON 
+    # para descriptors y categories
+    new_alert = models.Alert(
+        user_id=user_id,
+        name=payload.name,
+        cron_expression=payload.cron_expression,
+        descriptors=payload.descriptors,
+        categories=[cat.model_dump() for cat in payload.categories] # Si categories es una lista de Pydantic models
+    )
+    db.add(new_alert)
+    db.commit()
+    db.refresh(new_alert)
+
+    return new_alert
 
 
 @app.get(
@@ -701,7 +779,9 @@ def delete_user_alert(user_id: int, alert_id: int, _: UserInDB = Depends(get_cur
     for notification_id in notification_ids:
         notifications_store.pop(notification_id, None)
     alerts_store.pop(alert_id, None)
-
+    
+# --- CRUD USER ALERTS
+# --- CRUD USER ALERTS NOTIFICATIONS
 
 @app.get(
     f"{API_PREFIX}/users/{{user_id}}/alerts/{{alert_id}}/notifications",
@@ -723,6 +803,7 @@ def list_alert_notifications(
     status_code=201,
     tags=["notifications"],
 )
+
 def create_alert_notification(
     user_id: int,
     alert_id: int,
@@ -786,7 +867,8 @@ def delete_alert_notification(
     ensure_alert_for_user(user_id, alert_id)
     ensure_notification_for_alert(alert_id, notification_id)
     notifications_store.pop(notification_id, None)
-
+# --- FIN CRUD USER ALERTS NOTIFICATIONS
+# --- CRUD CATEGORIES
 
 @app.get(f"{API_PREFIX}/categories", response_model=list[Category], tags=["categories"])
 def list_categories(_: UserInDB = Depends(get_current_user)) -> list[Category]:
@@ -835,7 +917,8 @@ def delete_category(category_id: int, _: UserInDB = Depends(get_current_user)) -
             raise HTTPException(status_code=409, detail="Categoría asociada a canales RSS")
 
     categories_store.pop(category_id, None)
-
+# --- FIN CRUD CATEGORIES
+# --- CRUD INFORMATION SOURCES Y RSS CHANNELS
 
 @app.get(
     f"{API_PREFIX}/information-sources",
@@ -908,7 +991,8 @@ def delete_information_source(source_id: int, _: UserInDB = Depends(get_current_
         rss_channels_store.pop(channel_id, None)
 
     information_sources_store.pop(source_id, None)
-
+# --- FIN CRUD INFORMATION SOURCES
+# --- CRUD RSS CHANNELS
 
 @app.get(
     f"{API_PREFIX}/information-sources/{{source_id}}/rss-channels",
@@ -996,6 +1080,8 @@ def delete_source_channel(
     ensure_information_source_exists(source_id)
     ensure_rss_for_source(source_id, channel_id)
     rss_channels_store.pop(channel_id, None)
+# --- FIN CRUD RSS CHANNELS
+# --- CRUD STATS
 
 
 @app.get(f"{API_PREFIX}/stats", response_model=list[Stats], tags=["stats"])
@@ -1041,3 +1127,4 @@ def delete_stats(stats_id: int, _: UserInDB = Depends(get_current_user)) -> None
     if stats_id not in stats_store:
         raise HTTPException(status_code=404, detail="Stats no encontrados")
     stats_store.pop(stats_id, None)
+# --- FIN CRUD STATS
