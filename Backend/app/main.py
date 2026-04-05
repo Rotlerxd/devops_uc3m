@@ -262,10 +262,16 @@ def ensure_user_exists(user_id: int, db: Session):
     return user
 
 
-def ensure_alert_for_user(user_id: int, alert_id: int) -> Alert:
-    alert = alerts_store.get(alert_id)
-    if not alert or alert.user_id != user_id:
-        raise HTTPException(status_code=404, detail="Alerta no encontrada para el usuario")
+#def ensure_alert_for_user(user_id: int, alert_id: int) -> Alert:
+#    alert = alerts_store.get(alert_id)
+#    if not alert or alert.user_id != user_id:
+#        raise HTTPException(status_code=404, detail="Alerta no encontrada para el usuario")
+#    return alert
+
+def ensure_alert_for_user(user_id: int, alert_id: int, db: Session):
+    alert = db.query(models.Alert).filter(models.Alert.id == alert_id, models.Alert.user_id == user_id).first()
+    if not alert:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alerta no encontrada para el usuario")
     return alert
 
 
@@ -687,9 +693,19 @@ def delete_role(role_id: int, db: Session = Depends(get_db), _: models.User = De
     response_model=list[Alert],
     tags=["alerts"],
 )
-def list_user_alerts(user_id: int, _: UserInDB = Depends(get_current_user)) -> list[Alert]:
-    ensure_user_exists(user_id)
-    return [alert for alert in alerts_store.values() if alert.user_id == user_id]
+def list_user_alerts(user_id: int, db: Session = Depends(get_db), 
+    current_user: models.User = Depends(get_current_user)) -> list[Alert]:
+    ensure_user_exists(user_id, db)
+
+    if current_user.id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="No tienes permisos para ver las alertas de otro usuario."
+        )
+
+    # Buscamos en PostgreSQL todas las alertas de este usuario
+    alerts = db.query(models.Alert).filter(models.Alert.user_id == user_id).all()
+    return alerts
 
 
 @app.post(
@@ -745,8 +761,9 @@ def create_user_alert(
     response_model=Alert,
     tags=["alerts"],
 )
-def get_user_alert(user_id: int, alert_id: int, _: UserInDB = Depends(get_current_user)) -> Alert:
-    return ensure_alert_for_user(user_id, alert_id)
+def get_user_alert(
+    user_id: int, alert_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)) -> Alert:
+    return ensure_alert_for_user(user_id, alert_id, db)
 
 
 @app.put(
@@ -758,12 +775,26 @@ def update_user_alert(
     user_id: int,
     alert_id: int,
     payload: AlertUpdate,
-    _: UserInDB = Depends(get_current_user),
-) -> Alert:
-    alert = ensure_alert_for_user(user_id, alert_id)
-    updated = alert.model_copy(update=payload.model_dump(exclude_unset=True))
-    alerts_store[alert_id] = updated
-    return updated
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+    ) -> Alert:
+    ensure_user_exists(user_id, db)
+    
+    if current_user.id != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acceso denegado.")
+
+    alert = db.query(models.Alert).filter(models.Alert.id == alert_id, models.Alert.user_id == user_id).first()
+    if not alert:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alerta no encontrada.")
+
+    # Actualizamos dinámicamente los campos que vengan en el payload
+    update_data = payload.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(alert, key, value)
+
+    db.commit()
+    db.refresh(alert)
+    return alert
 
 
 @app.delete(
@@ -773,12 +804,21 @@ def update_user_alert(
     response_class=Response,
     tags=["alerts"],
 )
-def delete_user_alert(user_id: int, alert_id: int, _: UserInDB = Depends(get_current_user)) -> None:
-    ensure_alert_for_user(user_id, alert_id)
-    notification_ids = [n.id for n in notifications_store.values() if n.alert_id == alert_id]
-    for notification_id in notification_ids:
-        notifications_store.pop(notification_id, None)
-    alerts_store.pop(alert_id, None)
+def delete_user_alert(user_id: int, alert_id: int, db: Session = Depends(get_db), 
+    current_user: models.User = Depends(get_current_user)) -> None:
+    ensure_user_exists(user_id, db)
+    
+    if current_user.id != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acceso denegado.")
+
+    alert = db.query(models.Alert).filter(models.Alert.id == alert_id, models.Alert.user_id == user_id).first()
+    if not alert:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alerta no encontrada.")
+
+    # Al borrar la alerta en BD, si las notificaciones tienen ON DELETE CASCADE, se borrarán solas.
+    # Si no, tendrías que borrarlas manualmente aquí antes de borrar la alerta.
+    db.delete(alert)
+    db.commit()
     
 # --- CRUD USER ALERTS
 # --- CRUD USER ALERTS NOTIFICATIONS
