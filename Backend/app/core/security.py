@@ -3,7 +3,7 @@ import smtplib
 from datetime import UTC, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-
+from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
@@ -21,9 +21,9 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 VERIFICATION_TOKEN_EXPIRE_HOURS = 24
 
 MAILTRAP_HOST = os.getenv("MAILTRAP_HOST", "sandbox.smtp.mailtrap.io")
-MAILTRAP_PORT = int(os.getenv("MAILTRAP_PORT", 2525))
-MAILTRAP_USER = os.getenv("MAIL_USERNAME", "")
-MAILTRAP_PASS = os.getenv("MAIL_PASSWORD", "")
+MAILTRAP_PORT = int(os.getenv("MAIL_PORT", 2525))
+MAILTRAP_USER = os.getenv("MAIL_USERNAME", "f7aab98648814d")
+MAILTRAP_PASS = os.getenv("MAIL_PASSWORD", "b34ae07bf8e257")
 
 # --- Configuración de bcrypt ---
 
@@ -69,6 +69,8 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
 
 def send_verification_email(to_email: str, token: str):
     """Envía el correo de verificación usando el SMTP de Mailtrap."""
+    load_dotenv()
+    
     msg = MIMEMultipart()
     msg["Subject"] = "NEWSRADAR - Verifica tu cuenta"
     msg["From"] = "noreply@newsradar.com"
@@ -93,6 +95,8 @@ def send_verification_email(to_email: str, token: str):
     """
     msg.attach(MIMEText(html, "html"))
     try:
+        print(f"DEBUG - Host: {MAILTRAP_HOST}")
+        print(f"DEBUG - User: {MAILTRAP_USER}")
         with smtplib.SMTP(MAILTRAP_HOST, MAILTRAP_PORT) as server:
             server.ehlo()
             server.starttls()
@@ -106,47 +110,3 @@ def send_verification_email(to_email: str, token: str):
 # --- DEPENDENCIAS DE AUTENTICACIÓN ---
 
 _bearer_scheme = HTTPBearer()
-
-
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
-    db: Session = Depends(get_db),
-):
-    token = credentials.credentials
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Token inválido o expirado",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
-            raise credentials_exception from None
-    except JWTError:
-        raise credentials_exception from None
-
-    user = db.query(models.User).filter(models.User.email == email).first()
-    if user is None:
-        raise credentials_exception from None
-
-    return user
-
-
-def require_role(required_role: str):
-    """Fábrica de dependencias que verifica si el usuario tiene el rol especificado."""
-
-    def role_checker(current_user: models.User = Depends(get_current_user)):
-        user_roles = [role.name for role in current_user.roles]
-        if required_role not in user_roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No tienes permisos suficientes para realizar esta acción",
-            )
-        return current_user
-
-    return role_checker
-
-
-get_current_admin = require_role("Admin")
-get_current_manager = require_role("Gestor")

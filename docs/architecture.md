@@ -76,25 +76,16 @@ contenedores Docker.
 Backend API (FastAPI)
 │
 ├── app/
-│   ├── api/v1/
-│   │   ├── auth.py          ← Registro, login, verificación email
-│   │   ├── users.py         ← CRUD de usuarios
-│   │   ├── alerts.py        ← CRUD de alertas + expansión de sinónimos
-│   │   ├── sources.py       ← CRUD de fuentes RSS
-│   │   └── notifications.py ← Buzón de notificaciones
+│   ├── data/
+│   │   ├── rss_seed.json       ← Semilla de datos estáticos (fuentes, canales y categorías)
 │   │
 │   ├── core/
-│   │   ├── database.py      ← Conexión PostgreSQL (asyncpg) + Elasticsearch
-│   │   ├── security.py      ← JWT: generación y verificación de tokens
-│   │   └── email.py         ← Envío de emails (smtplib + BackgroundTasks)
+│   │   └── security.py         ← Creacion de tokens y verificación por email
 │   │
-│   ├── crud/                ← Operaciones de base de datos por entidad
-│   ├── models/              ← Modelos SQLAlchemy (tablas PostgreSQL)
-│   ├── schemas/             ← Esquemas Pydantic (validación entrada/salida)
-│   │
-│   └── scheduler/           ← [Sprint 3] Motor de captura RSS
-│       ├── rss_fetcher.py   ← Lectura de canales RSS (expresión cron)
-│       └── classifier.py    ← Clasificación IPTC de noticias
+│   ├── main.py                 ← Esqueleto de la API
+│         │ scheduler/          ← Motor de captura RSS
+│         │ rss_fetcher_engine  ← Lectura de canales RSS (expresión cron)
+│         │ radar               ← Búsquedas en Elastic (multi_match) y generación de notificaciones
 ```
 
 ---
@@ -108,7 +99,6 @@ Las decisiones de arquitectura están documentadas como ADRs en `/docs/adr/`:
 | [0001](adr/0001-framework-backend-fastapi.md) | Framework backend: FastAPI + Pydantic V2 | Aceptado |
 | [0002](adr/0002-autenticacion-jwt.md) | Autenticación: JWT stateless | Aceptado |
 | [0003](adr/0003-verificacion-email-smtplib-mailtrap.md) | Email: smtplib + Mailtrap | Aceptado |
-| [0004](adr/0004-orm-sqlalchemy-asincrono-postgresql.md) | ORM: SQLAlchemy 2.0 asíncrono + PostgreSQL 15 | Aceptado |
 | [0005](adr/0005-frontend-react-vite.md) | Frontend: React 19 + Vite | Aceptado |
 | [0006](adr/0006-elasticsearch-indexacion-noticias.md) | Motor de búsqueda: Elasticsearch 8.12 | Aceptado |
 | [0007](adr/0007-frontend-bootstrap-react-router.md) | UI: Bootstrap 5 + React Router | Aceptado |
@@ -122,32 +112,7 @@ Las decisiones de arquitectura están documentadas como ADRs en `/docs/adr/`:
 
 ## 4. Modelo de datos
 
-### 4.1 Entidades relacionales (PostgreSQL)
-
-```
-Usuario             Alerta                   FuenteRSS
-────────────        ──────────────────       ──────────────────
-id (PK)             id (PK)                  id (PK)
-email               nombre                   nombre
-password_hash       palabra_clave            url_rss
-nombre              descriptores (3–10)      medio
-apellidos           categoria_iptc           categoria_iptc
-organizacion        expresion_cron
-rol                 activa
-is_verified         usuario_id (FK)
-
-Notificacion
-──────────────────
-id (PK)
-titulo
-contenido
-leida
-fecha
-usuario_id (FK)
-alerta_id (FK)
-```
-
-### 4.2 Documentos indexados (Elasticsearch — índice `newsradar_news`)
+### 4.1 Documentos indexados (Elasticsearch — índice `newsradar_news`)
 
 ```json
 {
@@ -185,12 +150,12 @@ Leer canal RSS ──► Parsear ítems ──► ¿Contiene palabra clave?
                     Indexar en Elasticsearch
                                │
                                ▼
-                    Generar Notificación (PostgreSQL)
+                    Generar Notificación
                                │
                     ┌──────────┴──────────┐
                     ▼                     ▼
              Buzón interno          Email al usuario
-             (PostgreSQL)           (SMTP)
+                                        (SMTP)
 ```
 
 ### 5.2 Registro de usuario
@@ -206,7 +171,7 @@ Validar datos (Pydantic) ──► ¿Email ya existe? ──► 400 Bad Request
 Crear usuario (is_verified=False, rol=LECTOR)
     │
     ▼
-BackgroundTask: token JWT (type=email_verification, exp=24h)
+BackgroundTask: token (type=email_verification, exp=24h)
     │
     ▼
 Enviar email (smtplib → Mailtrap)

@@ -1,26 +1,40 @@
 from __future__ import annotations
-
-import os
-from datetime import UTC, datetime
-import requests
-from pathlib import Path
-from fastapi import Depends, FastAPI, HTTPException, Response, status
-from fastapi.security import HTTPBearer
 from jose import JWTError, jwt
+from datetime import UTC, datetime
+from uuid import uuid4
+import os
+from fastapi import Depends, FastAPI, HTTPException, Response, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field, HttpUrl
-from sqlalchemy.orm import Session
-import json
+
 from app.core.security import (
-    create_access_token,
     create_verification_token,
-    get_current_admin,
-    get_current_user,
-    get_password_hash,
     send_verification_email,
-    verify_password,
 )
-from app.db import models
-from app.db.database import SessionLocal, engine, get_db
+from elasticsearch import Elasticsearch
+import json
+from pathlib import Path
+import asyncio
+import feedparser
+
+ELASTICSEARCH_URL = "http://localhost:9200" 
+
+# 2. Instanciar el cliente global
+es_client = Elasticsearch(ELASTICSEARCH_URL)
+
+def check_elastic_connection():
+    """Hace un 'ping' a Elasticsearch para comprobar que está vivo"""
+    try:
+        # .ping() devuelve True si el clúster responde
+        if es_client.ping():
+            print("[STARTUP] Conexión exitosa a Elasticsearch.")
+            # Opcional: imprimir la información del clúster
+            info = es_client.info()
+            print(f"   Clúster: {info['cluster_name']} | Versión: {info['version']['number']}")
+        else:
+            print("[STARTUP] No se pudo conectar a Elasticsearch (el ping devolvió False).")
+    except Exception as e:
+        print(f"[STARTUP] Error crítico al intentar conectar con Elasticsearch: {e}")
 
 app = FastAPI(
     title="NewsRadar API",
@@ -59,6 +73,7 @@ class UserBase(BaseModel):
     last_name: str = Field(..., min_length=1, max_length=120)
     organization: str = Field(..., min_length=1, max_length=180)
     role_ids: list[int] = Field(default_factory=list)
+    is_verified: bool = Field(default=False)
 
 
 class UserCreate(UserBase):
@@ -248,30 +263,15 @@ def ensure_role_ids_exist(role_ids: list[int]) -> None:
         )
 
 
-# def ensure_user_exists(user_id: int) -> None:
-#     if user_id not in users_store:
-#         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
-def ensure_user_exists(user_id: int, db: Session):
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
-            detail="Usuario no encontrado"
-        )
-    return user
+def ensure_user_exists(user_id: int) -> None:
+    if user_id not in users_store:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
 
-#def ensure_alert_for_user(user_id: int, alert_id: int) -> Alert:
-#    alert = alerts_store.get(alert_id)
-#    if not alert or alert.user_id != user_id:
-#        raise HTTPException(status_code=404, detail="Alerta no encontrada para el usuario")
-#    return alert
-
-def ensure_alert_for_user(user_id: int, alert_id: int, db: Session):
-    alert = db.query(models.Alert).filter(models.Alert.id == alert_id, models.Alert.user_id == user_id).first()
-    if not alert:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alerta no encontrada para el usuario")
+def ensure_alert_for_user(user_id: int, alert_id: int) -> Alert:
+    alert = alerts_store.get(alert_id)
+    if not alert or alert.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Alerta no encontrada para el usuario")
     return alert
 
 
@@ -298,7 +298,7 @@ def ensure_rss_for_source(source_id: int, channel_id: int) -> RSSChannel:
         raise HTTPException(status_code=404, detail="Canal RSS no encontrado para la fuente")
     return channel
 
-# REVISAR RETURS EN CRUD
+
 def sanitize_user(user: UserInDB) -> User:
     return User(
         id=user.id,
@@ -310,92 +310,103 @@ def sanitize_user(user: UserInDB) -> User:
     )
 
 
-#
-# def get_current_user(
-#     credentials: HTTPAuthorizationCredentials = Depends(security),
-# ) -> UserInDB:
-#     if credentials is None or credentials.scheme.lower() != "bearer":
-#         raise HTTPException(status_code=401, detail="Token inválido o ausente")
-#
-#     user_id = active_tokens.get(credentials.credentials)
-#     if not user_id:
-#         raise HTTPException(status_code=401, detail="Token inválido o expirado")
-#
-#     user = users_store.get(user_id)
-#     if not user:
-#         raise HTTPException(status_code=401, detail="Usuario inválido")
-#
-#     return user
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> UserInDB:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Token inválido o ausente")
+
+    user_id = active_tokens.get(credentials.credentials)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Token inválido o expirado")
+
+    user = users_store.get(user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="Usuario inválido")
+
+    return user
 
 
 def create_seed_data() -> None:
-    db = SessionLocal()
-    try:
-        # Comprobamos si ya existen roles para no duplicarlos
-        if not db.query(models.Role).first():
-            roles = [models.Role(name="Admin"), models.Role(name="Gestor"), models.Role(name="Lector")]
-            db.add_all(roles)
-            db.commit()
+    if roles_store:
+        return
 
-        # Comprobamos si existe el usuario admin inicial
-        admin_user = db.query(models.User).filter(models.User.email == "admin@newsradar.com").first()
-        if not admin_user:
-            admin_role = db.query(models.Role).filter(models.Role.name == "Admin").first()
-            hashed_pwd = get_password_hash("admin123")  # Contraseña por defecto
+    admin_role_id = next_id("roles")
+    roles_store[admin_role_id] = Role(id=admin_role_id, name="admin")
 
-            new_admin = models.User(
-                email="admin@newsradar.com",
-                first_name="Admin",
-                last_name="NewsRadar",
-                organization="NewsRadar",
-                hashed_password=hashed_pwd,
-                is_verified=True,  # El admin ya nace verificado
+    user_role_id = next_id("roles")
+    roles_store[user_role_id] = Role(id=user_role_id, name="user")
+
+    admin_user_id = next_id("users")
+    users_store[admin_user_id] = UserInDB(
+        id=admin_user_id,
+        email="admin@newsradar.com",
+        first_name="Admin",
+        last_name="NewsRadar",
+        organization="NewsRadar",
+        role_ids=[admin_role_id],
+        password="admin123",
+        is_verified=True,
+    )
+    
+    stats_store[1] = Stats(id=1, total_news=0, total_notifications=0)
+    
+    # --- 2. CARGA DE FUENTES Y CANALES RSS DESDE EL JSON ---
+    base_dir = Path(__file__).resolve().parent
+    seed_file = base_dir / "data" / "rss_seed.json"
+
+    if seed_file.exists():
+        with open(seed_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        for source_data in data:
+            # Si el JSON no la tiene, le ponemos una por defecto basada en el nombre.
+            fake_url = f"https://www.{source_data['source_name'].lower().replace(' ', '')}.com"
+            source_url = source_data.get("url", fake_url)
+
+            # Crear la fuente
+            source_id = next_id("information_sources")
+            source = InformationSource(
+                id=source_id,
+                name=source_data["source_name"],
+                url=source_url
             )
-            new_admin.roles.append(admin_role)
-            db.add(new_admin)
-            db.commit()
-    finally:
-        db.close()
-        
-def load_seed_data():
-    """Lee el JSON e inserta fuentes y canales si no existen."""
-    db = SessionLocal()
-    try:
-        # Solo insertamos si la tabla de fuentes está vacía
-        if not db.query(models.Source).first():
-            
-            base_dir = Path(__file__).resolve().parent
-            seed_file = base_dir / "data" / "rss_seed.json"
-            if os.path.exists(seed_file):
-                with open(seed_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    
-                for source_data in data:
-                    new_source = models.Source(
-                        name=source_data["source_name"],
-                        description=source_data.get("description", "")
-                    )
-                    db.add(new_source)
-                    db.flush() # Para obtener el ID de la fuente inmediatamente
-                    
-                    for channel_data in source_data["channels"]:
-                        new_channel = models.RssChannel(
-                            source_id=new_source.id,
-                            name=channel_data["name"],
-                            url=channel_data["url"],
-                            category=channel_data["category"]
-                        )
-                        db.add(new_channel)
-                db.commit()
-                print("Semilla de 100 canales cargada correctamente en Postgres.")
-    finally:
-        db.close()
+            information_sources_store[source_id] = source
+
+            # Recorrer los canales de esta fuente
+            for channel_data in source_data.get("channels", []):
+                cat_name = channel_data.get("category", "General")
+
+                # Buscar si la categoría ya existe en nuestro diccionario
+                category = next((c for c in categories_store.values() if c.name == cat_name), None)
+
+                # Si no existe, la creamos y la guardamos en el diccionario
+                if not category:
+                    cat_id = next_id("categories")
+                    # El esquema pide 'source' por defecto a "IPTC"
+                    category = Category(id=cat_id, name=cat_name, source="IPTC")
+                    categories_store[cat_id] = category
+
+                # Crear el canal (Fíjate que el modelo actual no usa 'name', solo URL y Category)
+                channel_id = next_id("rss_channels")
+                channel = RSSChannel(
+                    id=channel_id,
+                    information_source_id=source_id,
+                    url=channel_data["url"],
+                    category_id=category.id
+                )
+                rss_channels_store[channel_id] = channel
+                
+        print("[STARTUP] Semilla cargada: Usuarios, Fuentes, Categorías y Canales en memoria.")
+    else:
+        print(f"[STARTUP] Archivo JSON no encontrado en: {seed_file}")
+
 
 @app.on_event("startup")
 def on_startup() -> None:
-    models.Base.metadata.create_all(bind=engine)
     create_seed_data()
-    load_seed_data()
+    check_elastic_connection()
+    asyncio.create_task(rss_fetcher_engine())
 
 
 @app.get(f"{API_PREFIX}/health", tags=["system"])
@@ -404,67 +415,34 @@ def health() -> dict:
 
 
 @app.post(f"{API_PREFIX}/auth/login", response_model=TokenResponse, tags=["auth"])
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.email == payload.email).first()
+def login(payload: LoginRequest) -> TokenResponse:
+    user = next((u for u in users_store.values() if u.email == payload.email), None)
+    if user is None or user.password != payload.password:
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
-    if not user or not verify_password(payload.password, user.hashed_password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas")
-
-    # 3. Verificar si ha activado la cuenta
-    # if not user.is_verified:
-    #     raise HTTPException(
-    #         status_code=status.HTTP_403_FORBIDDEN,
-    #         detail="Cuenta no verificada. Por favor, revisa tu correo electrónico."
-    #     )
-
-    user_roles = [role.name for role in user.roles]
-
-    token_data = {"sub": user.email, "roles": user_roles}
-    access_token = create_access_token(data=token_data)
-
-    return {"access_token": access_token, "token_type": "bearer"}
+    token = str(uuid4())
+    active_tokens[token] = user.id
+    return TokenResponse(access_token=token)
 
 
-@app.post(f"{API_PREFIX}/auth/register", response_model=User, status_code=201, tags=["auth"])
-def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
-    # 1. Comprobar si el email ya existe en PostgreSQL
-    db_user = db.query(models.User).filter(models.User.email == payload.email).first()
-    if db_user:
+@app.post(f"{API_PREFIX}/auth/register", response_model=User, tags=["auth"])
+def register(payload: UserCreate) -> User:
+    if any(user.email == payload.email for user in users_store.values()):
         raise HTTPException(status_code=409, detail="El email ya está registrado")
 
-    # 2. Encriptar la contraseña
-    hashed_password = get_password_hash(payload.password)
+    ensure_role_ids_exist(payload.role_ids)
 
-    # 3. Crear el nuevo usuario (por defecto le damos el rol Lector)
-    new_user = models.User(
-        email=payload.email,
-        first_name=payload.first_name,
-        last_name=payload.last_name,
-        organization=payload.organization,
-        hashed_password=hashed_password,
-        is_verified=False,  # Debe verificar su email con Mailtrap
-    )
+    user_id = next_id("users")
+    user_db = UserInDB(id=user_id, **payload.model_dump())
+    users_store[user_id] = user_db
+    # verificacion de Email
+    token = create_verification_token(user_db.email)
+    send_verification_email(user_db.email, token)
+    
+    return sanitize_user(user_db)
 
-    # Asignar rol "Lector" por defecto
-    lector_role = db.query(models.Role).filter(models.Role.name == "Lector").first()
-    if lector_role:
-        new_user.roles.append(lector_role)
-
-    # 4. Guardar en base de datos
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-
-    token = create_verification_token(new_user.email)
-    send_verification_email(new_user.email, token)
-
-    # 5. Mapear al esquema Pydantic de salida
-    return new_user
-
-
-# NUEVO ENDPOINT PARA VERIFICAR CUENTA CON TOKEN
 @app.get(f"{API_PREFIX}/auth/verify", tags=["auth"])
-def verify_email(token: str, db: Session = Depends(get_db)):
+def verify_email(token: str):
     credentials_exception = HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="Token de verificación inválido o expirado",
@@ -479,7 +457,13 @@ def verify_email(token: str, db: Session = Depends(get_db)):
         raise credentials_exception from None
 
     # Buscamos al usuario en la BD
-    user = db.query(models.User).filter(models.User.email == email).first()
+    user = None
+    for u in users_store.values():
+        if u.email == email:
+            user = u
+            break
+    
+    
     if user is None:
         raise credentials_exception from None
 
@@ -488,109 +472,53 @@ def verify_email(token: str, db: Session = Depends(get_db)):
 
     # Actualizamos el estado a verificado
     user.is_verified = True
-    db.commit()
+    for u in users_store.values():
+        if u.email == email:
+            u.is_verified = True
+            break
 
     return {"msg": "Cuenta verificada con éxito. Ya puedes iniciar sesión."}
 
-
-# NUEVO ENDPOINT PARA OBTENR DATOS DEL USUARIO LOGUEADO
-@app.get(f"{API_PREFIX}/users/me", tags=["users"], response_model=User)
-def read_users_me(current_user: models.User = Depends(get_current_user)):
-    """Devuelve los datos del usuario logueado."""
-    return current_user
-
-
-# CRUD USUARIOS
-
-
 @app.get(f"{API_PREFIX}/users", response_model=list[User], tags=["users"])
-def list_users(
-    db: Session = Depends(get_db),
-    _: models.User = Depends(get_current_admin),  # Bloqueado solo para Admins
-) -> list[User]:
-    return db.query(models.User).all()
+def list_users(_: UserInDB = Depends(get_current_user)) -> list[User]:
+    return [sanitize_user(user) for user in users_store.values()]
 
 
 @app.post(f"{API_PREFIX}/users", response_model=User, status_code=201, tags=["users"])
-def create_user(
-    payload: UserCreate, db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)
-) -> User:
-    # 1. Verificar colisión de emails
-    if db.query(models.User).filter(models.User.email == payload.email).first():
+def create_user(payload: UserCreate, _: UserInDB = Depends(get_current_user)) -> User:
+    if any(user.email == payload.email for user in users_store.values()):
         raise HTTPException(status_code=409, detail="El email ya está registrado")
 
-    # 2. Reemplazo de `ensure_role_ids_exist` en BD real
-    roles = db.query(models.Role).filter(models.Role.id.in_(payload.role_ids)).all()
-    if len(roles) != len(payload.role_ids):
-        raise HTTPException(status_code=404, detail="Uno o más roles no existen")
-
-    # 3. Preparar el usuario (Hasheando la contraseña)
-    hashed_pwd = get_password_hash(payload.password)
-    user_data = payload.model_dump(exclude={"password", "role_ids"})
-
-    user_db = models.User(**user_data, hashed_password=hashed_pwd)
-    user_db.roles = roles  # Asignamos la relación many-to-many de roles
-
-    db.add(user_db)
-    db.commit()
-    db.refresh(user_db)
-
-    return user_db
+    ensure_role_ids_exist(payload.role_ids)
+    user_id = next_id("users")
+    user_db = UserInDB(id=user_id, **payload.model_dump())
+    users_store[user_id] = user_db
+    return sanitize_user(user_db)
 
 
 @app.get(f"{API_PREFIX}/users/{{user_id}}", response_model=User, tags=["users"])
-def get_user(user_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)) -> User:
-    user = db.query(models.User).filter(models.User.id == user_id).first()
+def get_user(user_id: int, _: UserInDB = Depends(get_current_user)) -> User:
+    user = users_store.get(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    return user
+    return sanitize_user(user)
 
 
 @app.put(f"{API_PREFIX}/users/{{user_id}}", response_model=User, tags=["users"])
-def update_user(
-    user_id: int, payload: UserUpdate, db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)
-) -> User:
-    user = db.query(models.User).filter(models.User.id == user_id).first()
+def update_user(user_id: int, payload: UserUpdate, _: UserInDB = Depends(get_current_user)) -> User:
+    user = users_store.get(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     data = payload.model_dump(exclude_unset=True)
-
-    # Verificar colisión de email si se intenta cambiar
-    if "email" in data:
-        email_collision = (
-            db.query(models.User).filter(models.User.email == data["email"], models.User.id != user_id).first()
-        )
-        if email_collision:
-            raise HTTPException(status_code=409, detail="El email ya está registrado")
-
-    # Actualizar roles si vienen en el payload
-    # if "role_ids" in data:
-    #     roles = db.query(models.Role).filter(models.Role.id.in_(data["role_ids"])).all()
-    #     if len(roles) != len(data["role_ids"]):
-    #          raise HTTPException(status_code=404, detail="Uno o más roles no existen")
-    #     user.roles = roles
-    #     del data["role_ids"]
-
-    # Actualizar contraseña si viene en el payload
-    if "password" in data:
-        user.hashed_password = get_password_hash(data["password"])
-        del data["password"]
-
+    if "email" in data and any(u.email == data["email"] and u.id != user_id for u in users_store.values()):
+        raise HTTPException(status_code=409, detail="El email ya está registrado")
     if "role_ids" in data:
-        roles = db.query(models.Role).filter(models.Role.id.in_(data["role_ids"])).all()
-        if len(roles) != len(data["role_ids"]):
-            raise HTTPException(status_code=404, detail="Uno o más roles no existen")
-        user.roles = roles
-        data.pop("role_ids", None)
+        ensure_role_ids_exist(data["role_ids"])
 
-    # Actualizar el resto de campos dinámicamente
-    for key, value in data.items():
-        setattr(user, key, value)
-
-    db.commit()
-    db.refresh(user)
-    return user
+    updated = user.model_copy(update=data)
+    users_store[user_id] = updated
+    return sanitize_user(updated)
 
 
 @app.delete(
@@ -600,67 +528,49 @@ def update_user(
     response_class=Response,
     tags=["users"],
 )
-def delete_user(user_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)) -> None:
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
+def delete_user(user_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+    if user_id not in users_store:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    # Nota sobre el borrado en cascada:
-    # Al usar PostgreSQL + SQLAlchemy, si tus modelos (Alerts, Notifications)
-    # tienen configurado el borrado en cascada (ondelete="CASCADE"),
-    # la base de datos se encarga automáticamente de borrar todo lo asociado a este usuario.
-    db.delete(user)
-    db.commit()
+    alert_ids = [alert.id for alert in alerts_store.values() if alert.user_id == user_id]
+    for alert_id in alert_ids:
+        notification_ids = [n.id for n in notifications_store.values() if n.alert_id == alert_id]
+        for notification_id in notification_ids:
+            notifications_store.pop(notification_id, None)
+        alerts_store.pop(alert_id, None)
 
-
-# --- FIN CRUD USUARIOS
-
-# --- CRUD ROLES
+    users_store.pop(user_id, None)
 
 
 @app.get(f"{API_PREFIX}/roles", response_model=list[Role], tags=["roles"])
-def list_roles(db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)) -> list[Role]:
-    return db.query(models.Role).all()
+def list_roles(_: UserInDB = Depends(get_current_user)) -> list[Role]:
+    return list(roles_store.values())
 
 
 @app.post(f"{API_PREFIX}/roles", response_model=Role, status_code=201, tags=["roles"])
-def create_role(
-    payload: RoleCreate, db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)
-) -> Role:
-    # verificar si ya existe un rol con ese nombre para evitar duplicados
-    if db.query(models.Role).filter(models.Role.name == payload.name).first():
-        raise HTTPException(status_code=409, detail="El rol ya existe")
-
-    new_role = models.Role(**payload.model_dump())
-    db.add(new_role)
-    db.commit()
-    db.refresh(new_role)
-    return new_role
+def create_role(payload: RoleCreate, _: UserInDB = Depends(get_current_user)) -> Role:
+    role_id = next_id("roles")
+    role = Role(id=role_id, **payload.model_dump())
+    roles_store[role_id] = role
+    return role
 
 
 @app.get(f"{API_PREFIX}/roles/{{role_id}}", response_model=Role, tags=["roles"])
-def get_role(role_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)) -> Role:
-    role = db.query(models.Role).filter(models.Role.id == role_id).first()
+def get_role(role_id: int, _: UserInDB = Depends(get_current_user)) -> Role:
+    role = roles_store.get(role_id)
     if not role:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
     return role
 
 
 @app.put(f"{API_PREFIX}/roles/{{role_id}}", response_model=Role, tags=["roles"])
-def update_role(
-    role_id: int, payload: RoleUpdate, db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)
-) -> Role:
-    role = db.query(models.Role).filter(models.Role.id == role_id).first()
+def update_role(role_id: int, payload: RoleUpdate, _: UserInDB = Depends(get_current_user)) -> Role:
+    role = roles_store.get(role_id)
     if not role:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
-
-    update_data = payload.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(role, key, value)
-
-    db.commit()
-    db.refresh(role)
-    return role
+    updated = role.model_copy(update=payload.model_dump(exclude_unset=True))
+    roles_store[role_id] = updated
+    return updated
 
 
 @app.delete(
@@ -670,42 +580,29 @@ def update_role(
     response_class=Response,
     tags=["roles"],
 )
-def delete_role(role_id: int, db: Session = Depends(get_db), _: models.User = Depends(get_current_admin)) -> None:
-    role = db.query(models.Role).filter(models.Role.id == role_id).first()
-    if not role:
+def delete_role(role_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+    if role_id not in roles_store:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
 
-    # Respetamos tu lógica de evitar borrar roles en uso.
-    # Comprobamos si hay algún usuario que tenga este rol asignado.
-    users_with_role = db.query(models.User).filter(models.User.roles.any(id=role_id)).first()
-    if users_with_role:
-        raise HTTPException(status_code=409, detail="No se puede eliminar un rol asignado a usuarios")
+    for user in users_store.values():
+        if role_id in user.role_ids:
+            raise HTTPException(
+                status_code=409,
+                detail="No se puede eliminar un rol asignado a usuarios",
+            )
 
-    db.delete(role)
-    db.commit()
+    roles_store.pop(role_id, None)
 
-
-# --- FIN CRUD ROLES
-# --- CRUD USER ALERTS
 
 @app.get(
     f"{API_PREFIX}/users/{{user_id}}/alerts",
     response_model=list[Alert],
     tags=["alerts"],
 )
-def list_user_alerts(user_id: int, db: Session = Depends(get_db), 
-    current_user: models.User = Depends(get_current_user)) -> list[Alert]:
-    ensure_user_exists(user_id, db)
-
-    if current_user.id != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="No tienes permisos para ver las alertas de otro usuario."
-        )
-
-    # Buscamos en PostgreSQL todas las alertas de este usuario
-    alerts = db.query(models.Alert).filter(models.Alert.user_id == user_id).all()
-    return alerts
+def list_user_alerts(user_id: int, current_user: UserInDB = Depends(get_current_user)) -> list[Alert]:
+    ensure_user_exists(user_id)
+    
+    return [alert for alert in alerts_store.values() if alert.user_id == user_id]
 
 
 @app.post(
@@ -714,46 +611,35 @@ def list_user_alerts(user_id: int, db: Session = Depends(get_db),
     status_code=201,
     tags=["alerts"],
 )
-def create_user_alert(
-        user_id: int, payload: AlertCreate, current_user: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
-    ) -> Alert:
-    ensure_user_exists(user_id, db)
-
+def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB = Depends(get_current_user)) -> Alert:
+    ensure_user_exists(user_id)
+    
+    # Validar que el usuario que crea la alerta es el mismo que está logueado
     if current_user.id != user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, 
             detail="No tienes permisos para crear alertas para otro usuario."
         )
-
-    # Validar límite de 20 alertas
-    current_alerts_count = db.query(models.Alert).filter(models.Alert.user_id == user_id).count()
-    if current_alerts_count >= 20:
+    
+    # Validar regla: Límite máximo de 20 alertas por usuario
+    user_alerts_count = sum(1 for a in alerts_store.values() if a.user_id == user_id)
+    if user_alerts_count >= 20:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Límite máximo de 20 alertas alcanzado."
         )
-
-    # Validar regla de negocio: entre 3 y 10 descriptores (vienen del payload)
+    
+    # Validar regla: Entre 3 y 10 descriptores
     if len(payload.descriptors) < 3 or len(payload.descriptors) > 10:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="La alerta debe tener entre 3 y 10 descriptores (sinónimos)."
         )
-
-    # Creación en PostgreSQL asumiendo que models.Alert tiene columnas JSON 
-    # para descriptors y categories
-    new_alert = models.Alert(
-        user_id=user_id,
-        name=payload.name,
-        cron_expression=payload.cron_expression,
-        descriptors=payload.descriptors,
-        categories=[cat.model_dump() for cat in payload.categories] # Si categories es una lista de Pydantic models
-    )
-    db.add(new_alert)
-    db.commit()
-    db.refresh(new_alert)
-
-    return new_alert
+        
+    alert_id = next_id("alerts")
+    alert = Alert(id=alert_id, user_id=user_id, **payload.model_dump())
+    alerts_store[alert_id] = alert
+    return alert
 
 
 @app.get(
@@ -761,9 +647,8 @@ def create_user_alert(
     response_model=Alert,
     tags=["alerts"],
 )
-def get_user_alert(
-    user_id: int, alert_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)) -> Alert:
-    return ensure_alert_for_user(user_id, alert_id, db)
+def get_user_alert(user_id: int, alert_id: int, _: UserInDB = Depends(get_current_user)) -> Alert:
+    return ensure_alert_for_user(user_id, alert_id)
 
 
 @app.put(
@@ -775,26 +660,12 @@ def update_user_alert(
     user_id: int,
     alert_id: int,
     payload: AlertUpdate,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-    ) -> Alert:
-    ensure_user_exists(user_id, db)
-    
-    if current_user.id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acceso denegado.")
-
-    alert = db.query(models.Alert).filter(models.Alert.id == alert_id, models.Alert.user_id == user_id).first()
-    if not alert:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alerta no encontrada.")
-
-    # Actualizamos dinámicamente los campos que vengan en el payload
-    update_data = payload.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(alert, key, value)
-
-    db.commit()
-    db.refresh(alert)
-    return alert
+    _: UserInDB = Depends(get_current_user),
+) -> Alert:
+    alert = ensure_alert_for_user(user_id, alert_id)
+    updated = alert.model_copy(update=payload.model_dump(exclude_unset=True))
+    alerts_store[alert_id] = updated
+    return updated
 
 
 @app.delete(
@@ -804,24 +675,13 @@ def update_user_alert(
     response_class=Response,
     tags=["alerts"],
 )
-def delete_user_alert(user_id: int, alert_id: int, db: Session = Depends(get_db), 
-    current_user: models.User = Depends(get_current_user)) -> None:
-    ensure_user_exists(user_id, db)
-    
-    if current_user.id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acceso denegado.")
+def delete_user_alert(user_id: int, alert_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+    ensure_alert_for_user(user_id, alert_id)
+    notification_ids = [n.id for n in notifications_store.values() if n.alert_id == alert_id]
+    for notification_id in notification_ids:
+        notifications_store.pop(notification_id, None)
+    alerts_store.pop(alert_id, None)
 
-    alert = db.query(models.Alert).filter(models.Alert.id == alert_id, models.Alert.user_id == user_id).first()
-    if not alert:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alerta no encontrada.")
-
-    # Al borrar la alerta en BD, si las notificaciones tienen ON DELETE CASCADE, se borrarán solas.
-    # Si no, tendrías que borrarlas manualmente aquí antes de borrar la alerta.
-    db.delete(alert)
-    db.commit()
-    
-# --- CRUD USER ALERTS
-# --- CRUD USER ALERTS NOTIFICATIONS
 
 @app.get(
     f"{API_PREFIX}/users/{{user_id}}/alerts/{{alert_id}}/notifications",
@@ -843,7 +703,6 @@ def list_alert_notifications(
     status_code=201,
     tags=["notifications"],
 )
-
 def create_alert_notification(
     user_id: int,
     alert_id: int,
@@ -907,8 +766,7 @@ def delete_alert_notification(
     ensure_alert_for_user(user_id, alert_id)
     ensure_notification_for_alert(alert_id, notification_id)
     notifications_store.pop(notification_id, None)
-# --- FIN CRUD USER ALERTS NOTIFICATIONS
-# --- CRUD CATEGORIES
+
 
 @app.get(f"{API_PREFIX}/categories", response_model=list[Category], tags=["categories"])
 def list_categories(_: UserInDB = Depends(get_current_user)) -> list[Category]:
@@ -957,8 +815,7 @@ def delete_category(category_id: int, _: UserInDB = Depends(get_current_user)) -
             raise HTTPException(status_code=409, detail="Categoría asociada a canales RSS")
 
     categories_store.pop(category_id, None)
-# --- FIN CRUD CATEGORIES
-# --- CRUD INFORMATION SOURCES Y RSS CHANNELS
+
 
 @app.get(
     f"{API_PREFIX}/information-sources",
@@ -1031,8 +888,7 @@ def delete_information_source(source_id: int, _: UserInDB = Depends(get_current_
         rss_channels_store.pop(channel_id, None)
 
     information_sources_store.pop(source_id, None)
-# --- FIN CRUD INFORMATION SOURCES
-# --- CRUD RSS CHANNELS
+
 
 @app.get(
     f"{API_PREFIX}/information-sources/{{source_id}}/rss-channels",
@@ -1120,8 +976,6 @@ def delete_source_channel(
     ensure_information_source_exists(source_id)
     ensure_rss_for_source(source_id, channel_id)
     rss_channels_store.pop(channel_id, None)
-# --- FIN CRUD RSS CHANNELS
-# --- CRUD STATS
 
 
 @app.get(f"{API_PREFIX}/stats", response_model=list[Stats], tags=["stats"])
@@ -1167,4 +1021,109 @@ def delete_stats(stats_id: int, _: UserInDB = Depends(get_current_user)) -> None
     if stats_id not in stats_store:
         raise HTTPException(status_code=404, detail="Stats no encontrados")
     stats_store.pop(stats_id, None)
-# --- FIN CRUD STATS
+
+
+
+async def rss_fetcher_engine():
+    """Motor en segundo plano que descarga RSS y los indexa en Elasticsearch"""
+    
+    # Esperamos un poco antes de arrancar la primera vez para dar tiempo a que cargue la semilla
+    await asyncio.sleep(5) 
+    
+    while True:
+        print("[MOTOR RSS] Iniciando ciclo de extracción...")
+        
+        # Iteramos sobre todos los canales guardados en memoria
+        for channel_id, channel in rss_channels_store.items():
+            try:
+                # Descargamos y parseamos el XML
+                feed = feedparser.parse(str(channel.url))
+                
+                nuevas_noticias = 0
+                for entry in feed.entries:
+                    # Preparamos el documento
+                    doc = {
+                        "title": entry.get("title", ""),
+                        "link": entry.get("link", ""),
+                        "summary": entry.get("summary", ""),
+                        "published_at": entry.get("published", datetime.now(UTC).isoformat()),
+                        "channel_id": channel_id,
+                        "category_id": channel.category_id,
+                    }
+                    
+                    # Lo mandamos a Elasticsearch (al índice 'newsradar_articles')
+                    # Usamos el link como ID en Elastic para evitar duplicados si la noticia ya se bajó
+                    es_client.index(
+                        index="newsradar_articles", 
+                        id=doc["link"], 
+                        document=doc
+                    )
+                    nuevas_noticias += 1
+                
+                if nuevas_noticias > 0:
+                    print(f"[MOTOR RSS] {nuevas_noticias} noticias indexadas de: {channel.url}")
+                    stats_store[1].total_news += nuevas_noticias
+                    
+            except Exception as e:
+                print(f"[MOTOR RSS] Error procesando canal {channel.url}: {e}")
+                
+        print("[EL RADAR] Cruzando alertas con las nuevas noticias...")
+        
+        # Iteramos sobre todas las alertas que han creado los usuarios
+        for alert_id, alert in alerts_store.items():
+            if not alert.descriptors:
+                continue
+                
+            # 1. Construimos la consulta para Elasticsearch
+            # Buscamos en 'title' y 'summary' cualquier coincidencia con los descriptores
+            clausulas_busqueda = [
+                {"multi_match": {"query": desc, "fields": ["title", "summary"]}} 
+                for desc in alert.descriptors
+            ]
+            
+            consulta = {
+                "query": {
+                    "bool": {
+                        "should": clausulas_busqueda,
+                        "minimum_should_match": 1, # Al menos 1 descriptor debe coincidir
+                        "filter": {
+                            "range": {
+                                # Importante: Solo miramos noticias de los últimos 15 min 
+                                # para no notificar lo mismo una y otra vez
+                                "published_at": {"gte": "now-15m"} 
+                            }
+                        }
+                    }
+                }
+            }
+            
+            try:
+                # 2. Disparamos la búsqueda en el índice
+                resultados = es_client.search(index="newsradar_articles", body=consulta)
+                
+                # Elasticsearch devuelve el total de coincidencias en esta ruta
+                total_hits = resultados["hits"]["total"]["value"]
+                
+                # 3. Si hay coincidencias, creamos la notificación
+                if total_hits > 0:
+                    print(f"[ALERTA DISPARADA] '{alert.name}' (User {alert.user_id}): {total_hits} coincidencias.")
+                    
+                    notif_id = next_id("notifications")
+                    nueva_notificacion = Notification(
+                        id=notif_id,
+                        alert_id=alert_id,
+                        timestamp=datetime.now(UTC),
+                        metrics=[
+                            Metric(name="noticias_encontradas", value=float(total_hits))
+                        ]
+                    )
+                    notifications_store[notif_id] = nueva_notificacion
+                    stats_store[1].total_notifications += 1
+                    
+            except Exception as e:
+                print(f"[RADAR] Error consultando alerta '{alert.name}': {e}")
+                
+        print("[MOTOR RSS] Ciclo completado. Durmiendo 15 minutos...")
+        # Esperamos 15 minutos (900 segundos) hasta la próxima batida
+        #await asyncio.sleep(900)
+        await asyncio.sleep(30)  # Para pruebas, lo dejamos en 1 minuto
