@@ -10,9 +10,6 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
-from app.db import models
-from app.db.database import get_db
-
 # --- Variables de entorno ---
 
 SECRET_KEY = os.getenv("SECRET_KEY", "newsradar_secret_key_temporal")
