@@ -1,0 +1,29 @@
+[
+  {
+    "source_name": "El País",
+    "description": "Periódico generalista español",
+    "channels": [
+      {
+        "name": "Titulares",
+        "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada",
+        "category": "General"
+      },
+      {
+        "name": "Tecnología",
+        "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/tecnologia/portada",
+        "category": "Science and Technology"
+      }
+    ]
+  },
+  {
+    "source_name": "BBC News",
+    "description": "Noticias internacionales",
+    "channels": [
+      {
+        "name": "World",
+        "url": "http://feeds.bbci.co.uk/news/world/rss.xml",
+        "category": "World"
+      }
+    ]
+  }
+]

@@ -1,45 +1,47 @@
-import asyncio
-import sys
 import os
-# Esto permite a Python encontrar el módulo 'app' ejecutando el script desde la raíz
+import sys
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-
-# Ajusta el import de tu sesión según cómo la llamaras en database.py
-from app.core.database import AsyncSessionLocal 
-from app.models.usuario import Usuario, RolUsuario
 from app.core.security import get_password_hash
+from app.db import models
+from app.db.database import SessionLocal
 
-async def create_superuser():
+
+def create_superuser():
     print("--- Creación de Administrador (GESTOR) ---")
     email = input("Email: ")
     password = input("Contraseña: ")
-    nombre = input("Nombre: ")
-    apellidos = input("Apellidos: ")
+    first_name = input("Nombre: ")
+    last_name = input("Apellidos: ")
 
-    async with AsyncSessionLocal() as db:
-        # 1. Comprobar si ya existe
-        result = await db.execute(select(Usuario).filter(Usuario.email == email))
-        if result.scalars().first():
+    db = SessionLocal()
+    try:
+        existing = db.query(models.User).filter(models.User.email == email).first()
+        if existing:
             print("Error: Ya existe un usuario con ese email.")
             return
 
-        # 2. Insertar forzando el rol a GESTOR
         hashed_pw = get_password_hash(password)
-        super_user = Usuario(
+        gestor_role = db.query(models.Role).filter(models.Role.name == "Gestor").first()
+
+        super_user = models.User(
             email=email,
-            password_hash=hashed_pw,
-            nombre=nombre,
-            apellidos=apellidos,
-            rol=RolUsuario.GESTOR,
-            is_verified=True # Al ser admin, lo damos por verificado
+            hashed_password=hashed_pw,
+            first_name=first_name,
+            last_name=last_name,
+            organization="Admin",
+            is_verified=True,
         )
-        
+        if gestor_role:
+            super_user.roles.append(gestor_role)
+
         db.add(super_user)
-        await db.commit()
+        db.commit()
         print(f"¡Superusuario '{email}' creado con éxito con rol GESTOR!")
+    finally:
+        db.close()
+
 
 if __name__ == "__main__":
-    asyncio.run(create_superuser())
+    create_superuser()

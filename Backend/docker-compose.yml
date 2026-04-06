@@ -1,18 +1,18 @@
 version: '3.8'
 
 services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: newsradar_postgres
-    environment:
-      POSTGRES_USER: newsradar_user
-      POSTGRES_PASSWORD: newsradar_password
-      POSTGRES_DB: newsradar_db
-    ports:
-      - "5432:5432" # Mapeamos el puerto para que FastAPI pueda acceder desde fuera del contenedor
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
+  # postgres:
+  #   image: postgres:15-alpine
+  #   container_name: newsradar_postgres
+  #   environment:
+  #     POSTGRES_USER: newsradar_user
+  #     POSTGRES_PASSWORD: newsradar_password
+  #     POSTGRES_DB: newsradar_db
+  #   ports:
+  #     - "5432:5432" # Mapeamos el puerto para que FastAPI pueda acceder desde fuera del contenedor
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   restart: unless-stopped
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0

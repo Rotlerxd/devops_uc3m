@@ -2,7 +2,7 @@
 
 - **Estado:** Aceptado
 - **Fecha:** 2026-03-09
-- **Autores:** Equipo DevOps y Backend
+- **Autores:** Equipo DevOps (Konstantin Rannev, Álvaro Rodriguez) y Backend (Alberto Nuñez, Francisco Ruiz)
 - **Reemplaza a:** —
 - **Reemplazado por:** —
 

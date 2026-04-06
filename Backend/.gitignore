@@ -1,15 +1,27 @@
 .env
 
-
+# Virtual environments
 venv/
 env/
 .venv/
 
-
+# Python
 __pycache__/
 *.pyc
 *.pyo
-.pytest_cache/
+*.egg-info/
 
+# Testing / Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Quality
+.ruff_cache/
+
+# IDEs
 .vscode/
 .idea/
+
+# Alembic
+alembic/versions/*.pyc
