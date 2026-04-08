@@ -1,8 +1,39 @@
 // Pantalla de Login
-import React from 'react';
-import { Link } from 'react-router-dom';
+import React, {useState} from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 
 export default function Login() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e) => {
+    e.preventDefault(); 
+    setError(''); 
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/v1/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        localStorage.setItem('token', data.access_token);
+        navigate('/'); 
+      } else {
+        setError(data.detail || 'Credenciales incorrectas');
+      }
+    } catch (err) {
+      setError('Error de conexión: El servidor en 127.0.0.1:8000 está apagado o bloqueando CORS.');
+    }
+  };
+
   return (
     <div className="container mt-5">
       <div className="row justify-content-center">
@@ -12,14 +43,31 @@ export default function Login() {
               <h2 className="text-center mb-4">NEWSRADAR</h2>
               <h4 className="text-center mb-4 text-muted">Iniciar Sesión</h4>
               
-              <form>
+              {error && <div className="alert alert-danger">{error}</div>}
+              
+              <form onSubmit={handleSubmit}>
                 <div className="mb-3">
                   <label htmlFor="email" className="form-label">Correo electrónico</label>
-                  <input type="email" className="form-control" id="email" placeholder="usuario@uc3m.es" required />
+                  <input 
+                    type="email" 
+                    className="form-control" 
+                    id="email" 
+                    placeholder="usuario@uc3m.es" 
+                    required 
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
                 </div>
                 <div className="mb-4">
                   <label htmlFor="password" className="form-label">Contraseña</label>
-                  <input type="password" className="form-control" id="password" required />
+                  <input 
+                    type="password" 
+                    className="form-control" 
+                    id="password" 
+                    required 
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
                 </div>
                 
                 <button type="submit" className="btn btn-primary w-100 mb-3">
