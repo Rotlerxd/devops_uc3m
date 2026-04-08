@@ -35,10 +35,14 @@ cd ..
 # 4. Frontend tests
 echo ""
 echo "━━━ [4/6] Frontend Tests ━━━"
-cd Frontend
-npm run test:run || FAIL=1
-npm run build || FAIL=1
-cd ..
+if command -v npm >/dev/null 2>&1; then
+	cd Frontend
+	npm run test:run || FAIL=1
+	npm run build || FAIL=1
+	cd ..
+else
+	echo "  SKIPPED — npm not found (Node.js not installed)"
+fi
 
 # 5. Security scan
 echo ""

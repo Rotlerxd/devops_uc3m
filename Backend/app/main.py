@@ -1,26 +1,29 @@
 from __future__ import annotations
-from jose import JWTError, jwt
-from datetime import UTC, datetime
-from uuid import uuid4
+
+import asyncio
+import json
 import os
+from datetime import UTC, datetime
+from pathlib import Path
+from uuid import uuid4
+
+import feedparser
+from elasticsearch import Elasticsearch
 from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field, HttpUrl
 
 from app.core.security import (
     create_verification_token,
     send_verification_email,
 )
-from elasticsearch import Elasticsearch
-import json
-from pathlib import Path
-import asyncio
-import feedparser
 
-ELASTICSEARCH_URL = "http://localhost:9200" 
+ELASTICSEARCH_URL = "http://localhost:9200"
 
 # 2. Instanciar el cliente global
 es_client = Elasticsearch(ELASTICSEARCH_URL)
+
 
 def check_elastic_connection():
     """Hace un 'ping' a Elasticsearch para comprobar que está vivo"""
@@ -35,6 +38,7 @@ def check_elastic_connection():
             print("[STARTUP] No se pudo conectar a Elasticsearch (el ping devolvió False).")
     except Exception as e:
         print(f"[STARTUP] Error crítico al intentar conectar con Elasticsearch: {e}")
+
 
 app = FastAPI(
     title="NewsRadar API",
@@ -213,6 +217,8 @@ class StatsUpdate(BaseModel):
 
 class Stats(StatsBase):
     id: int
+    total_news: int = 0
+    total_notifications: int = 0
 
 
 class LoginRequest(BaseModel):
@@ -348,15 +354,15 @@ def create_seed_data() -> None:
         password="admin123",
         is_verified=True,
     )
-    
+
     stats_store[1] = Stats(id=1, total_news=0, total_notifications=0)
-    
+
     # --- 2. CARGA DE FUENTES Y CANALES RSS DESDE EL JSON ---
     base_dir = Path(__file__).resolve().parent
     seed_file = base_dir / "data" / "rss_seed.json"
 
     if seed_file.exists():
-        with open(seed_file, "r", encoding="utf-8") as f:
+        with open(seed_file, encoding="utf-8") as f:
             data = json.load(f)
 
         for source_data in data:
@@ -366,11 +372,7 @@ def create_seed_data() -> None:
 
             # Crear la fuente
             source_id = next_id("information_sources")
-            source = InformationSource(
-                id=source_id,
-                name=source_data["source_name"],
-                url=source_url
-            )
+            source = InformationSource(id=source_id, name=source_data["source_name"], url=source_url)
             information_sources_store[source_id] = source
 
             # Recorrer los canales de esta fuente
@@ -390,13 +392,10 @@ def create_seed_data() -> None:
                 # Crear el canal (Fíjate que el modelo actual no usa 'name', solo URL y Category)
                 channel_id = next_id("rss_channels")
                 channel = RSSChannel(
-                    id=channel_id,
-                    information_source_id=source_id,
-                    url=channel_data["url"],
-                    category_id=category.id
+                    id=channel_id, information_source_id=source_id, url=channel_data["url"], category_id=category.id
                 )
                 rss_channels_store[channel_id] = channel
-                
+
         print("[STARTUP] Semilla cargada: Usuarios, Fuentes, Categorías y Canales en memoria.")
     else:
         print(f"[STARTUP] Archivo JSON no encontrado en: {seed_file}")
@@ -406,7 +405,7 @@ def create_seed_data() -> None:
 def on_startup() -> None:
     create_seed_data()
     check_elastic_connection()
-    asyncio.create_task(rss_fetcher_engine())
+    _ = asyncio.create_task(rss_fetcher_engine())
 
 
 @app.get(f"{API_PREFIX}/health", tags=["system"])
@@ -438,8 +437,9 @@ def register(payload: UserCreate) -> User:
     # verificacion de Email
     token = create_verification_token(user_db.email)
     send_verification_email(user_db.email, token)
-    
+
     return sanitize_user(user_db)
+
 
 @app.get(f"{API_PREFIX}/auth/verify", tags=["auth"])
 def verify_email(token: str):
@@ -462,8 +462,7 @@ def verify_email(token: str):
         if u.email == email:
             user = u
             break
-    
-    
+
     if user is None:
         raise credentials_exception from None
 
@@ -478,6 +477,7 @@ def verify_email(token: str):
             break
 
     return {"msg": "Cuenta verificada con éxito. Ya puedes iniciar sesión."}
+
 
 @app.get(f"{API_PREFIX}/users", response_model=list[User], tags=["users"])
 def list_users(_: UserInDB = Depends(get_current_user)) -> list[User]:
@@ -601,7 +601,7 @@ def delete_role(role_id: int, _: UserInDB = Depends(get_current_user)) -> None:
 )
 def list_user_alerts(user_id: int, current_user: UserInDB = Depends(get_current_user)) -> list[Alert]:
     ensure_user_exists(user_id)
-    
+
     return [alert for alert in alerts_store.values() if alert.user_id == user_id]
 
 
@@ -613,29 +613,25 @@ def list_user_alerts(user_id: int, current_user: UserInDB = Depends(get_current_
 )
 def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB = Depends(get_current_user)) -> Alert:
     ensure_user_exists(user_id)
-    
+
     # Validar que el usuario que crea la alerta es el mismo que está logueado
     if current_user.id != user_id:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="No tienes permisos para crear alertas para otro usuario."
+            status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permisos para crear alertas para otro usuario."
         )
-    
+
     # Validar regla: Límite máximo de 20 alertas por usuario
     user_alerts_count = sum(1 for a in alerts_store.values() if a.user_id == user_id)
     if user_alerts_count >= 20:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Límite máximo de 20 alertas alcanzado."
-        )
-    
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Límite máximo de 20 alertas alcanzado.")
+
     # Validar regla: Entre 3 y 10 descriptores
     if len(payload.descriptors) < 3 or len(payload.descriptors) > 10:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="La alerta debe tener entre 3 y 10 descriptores (sinónimos)."
+            detail="La alerta debe tener entre 3 y 10 descriptores (sinónimos).",
         )
-        
+
     alert_id = next_id("alerts")
     alert = Alert(id=alert_id, user_id=user_id, **payload.model_dump())
     alerts_store[alert_id] = alert
@@ -1023,22 +1019,21 @@ def delete_stats(stats_id: int, _: UserInDB = Depends(get_current_user)) -> None
     stats_store.pop(stats_id, None)
 
 
-
 async def rss_fetcher_engine():
     """Motor en segundo plano que descarga RSS y los indexa en Elasticsearch"""
-    
+
     # Esperamos un poco antes de arrancar la primera vez para dar tiempo a que cargue la semilla
-    await asyncio.sleep(5) 
-    
+    await asyncio.sleep(5)
+
     while True:
         print("[MOTOR RSS] Iniciando ciclo de extracción...")
-        
+
         # Iteramos sobre todos los canales guardados en memoria
         for channel_id, channel in rss_channels_store.items():
             try:
                 # Descargamos y parseamos el XML
                 feed = feedparser.parse(str(channel.url))
-                
+
                 nuevas_noticias = 0
                 for entry in feed.entries:
                     # Preparamos el documento
@@ -1050,80 +1045,73 @@ async def rss_fetcher_engine():
                         "channel_id": channel_id,
                         "category_id": channel.category_id,
                     }
-                    
+
                     # Lo mandamos a Elasticsearch (al índice 'newsradar_articles')
                     # Usamos el link como ID en Elastic para evitar duplicados si la noticia ya se bajó
-                    es_client.index(
-                        index="newsradar_articles", 
-                        id=doc["link"], 
-                        document=doc
-                    )
+                    es_client.index(index="newsradar_articles", id=doc["link"], document=doc)
                     nuevas_noticias += 1
-                
+
                 if nuevas_noticias > 0:
                     print(f"[MOTOR RSS] {nuevas_noticias} noticias indexadas de: {channel.url}")
                     stats_store[1].total_news += nuevas_noticias
-                    
+
             except Exception as e:
                 print(f"[MOTOR RSS] Error procesando canal {channel.url}: {e}")
-                
+
         print("[EL RADAR] Cruzando alertas con las nuevas noticias...")
-        
+
         # Iteramos sobre todas las alertas que han creado los usuarios
         for alert_id, alert in alerts_store.items():
             if not alert.descriptors:
                 continue
-                
+
             # 1. Construimos la consulta para Elasticsearch
             # Buscamos en 'title' y 'summary' cualquier coincidencia con los descriptores
             clausulas_busqueda = [
-                {"multi_match": {"query": desc, "fields": ["title", "summary"]}} 
-                for desc in alert.descriptors
+                {"multi_match": {"query": desc, "fields": ["title", "summary"]}} for desc in alert.descriptors
             ]
-            
+
             consulta = {
                 "query": {
                     "bool": {
                         "should": clausulas_busqueda,
-                        "minimum_should_match": 1, # Al menos 1 descriptor debe coincidir
+                        "minimum_should_match": 1,  # Al menos 1 descriptor debe coincidir
                         "filter": {
                             "range": {
-                                # Importante: Solo miramos noticias de los últimos 15 min 
+                                # Importante: Solo miramos noticias de los últimos 15 min
                                 # para no notificar lo mismo una y otra vez
-                                "published_at": {"gte": "now-15m"} 
+                                "published_at": {"gte": "now-15m"}
                             }
-                        }
+                        },
                     }
                 }
             }
-            
+
             try:
                 # 2. Disparamos la búsqueda en el índice
                 resultados = es_client.search(index="newsradar_articles", body=consulta)
-                
+
                 # Elasticsearch devuelve el total de coincidencias en esta ruta
                 total_hits = resultados["hits"]["total"]["value"]
-                
+
                 # 3. Si hay coincidencias, creamos la notificación
                 if total_hits > 0:
                     print(f"[ALERTA DISPARADA] '{alert.name}' (User {alert.user_id}): {total_hits} coincidencias.")
-                    
+
                     notif_id = next_id("notifications")
                     nueva_notificacion = Notification(
                         id=notif_id,
                         alert_id=alert_id,
                         timestamp=datetime.now(UTC),
-                        metrics=[
-                            Metric(name="noticias_encontradas", value=float(total_hits))
-                        ]
+                        metrics=[Metric(name="noticias_encontradas", value=float(total_hits))],
                     )
                     notifications_store[notif_id] = nueva_notificacion
                     stats_store[1].total_notifications += 1
-                    
+
             except Exception as e:
                 print(f"[RADAR] Error consultando alerta '{alert.name}': {e}")
-                
+
         print("[MOTOR RSS] Ciclo completado. Durmiendo 15 minutos...")
         # Esperamos 15 minutos (900 segundos) hasta la próxima batida
-        #await asyncio.sleep(900)
+        # await asyncio.sleep(900)
         await asyncio.sleep(30)  # Para pruebas, lo dejamos en 1 minuto
