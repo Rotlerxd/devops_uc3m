@@ -173,6 +173,7 @@ Backend API (FastAPI — app/main.py)
 | [0010](adr/0010-migraciones-bd-alembic.md) | ~~Migraciones: Alembic~~ | Supersedido por ADR 0004 |
 | [0011](adr/0011-pipeline-cicd-github-actions.md) | CI/CD: GitHub Actions | Aceptado |
 | [0012](adr/0012-seguridad-scanning-pip-audit-trivy-sonarqube.md) | Seguridad: pip-audit + Trivy + SonarQube | Aceptado |
+| [0013](adr/0013-documentacion-backend-mkdocs-docstrings.md) | Documentación backend: docstrings + MkDocs | Aceptado |
 
 ---
 
