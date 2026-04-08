@@ -1,9 +1,9 @@
 # Arquitectura del sistema — NEWSRADAR
 
-- **Versión:** 1.0
-- **Fecha:** 2026-03-24
+- **Versión:** 1.1
+- **Fecha:** 2026-04-08
 - **Autores:** Equipo NEWSRADAR (UC3M — Desarrollo y Operación de Sistemas Software)
-- **Estado:** En desarrollo (Sprint 2)
+- **Estado:** En desarrollo (Sprint 3)
 
 ---
 
@@ -17,6 +17,12 @@ notificando a los usuarios cuando se detectan noticias relevantes.
 El sistema sigue una **arquitectura en capas** con separación clara entre
 visualización, lógica de negocio, API REST y persistencia, desplegado mediante
 contenedores Docker.
+
+**Decisión clave (Sprint 3):** tras revisión con el profesor, las entidades
+del sistema (usuarios, alertas, fuentes, roles) se almacenan en **memoria**
+mediante estructuras `dict` de Python. Elasticsearch sigue siendo el único
+sistema con persistencia real en disco, exclusivamente para las noticias
+indexadas. Ver [ADR 0004](adr/0004-persistencia-in-memory.md).
 
 ---
 
@@ -64,47 +70,107 @@ contenedores Docker.
 | Contenedor | Tecnología | Puerto | Responsabilidad |
 |---|---|---|---|
 | Frontend | React 19 + Vite | 5173 | Interfaz de usuario, panel de mando |
-| Backend API | FastAPI + Python | 8000 | Lógica de negocio, API REST, motor de captura RSS |
-| Base de datos relacional | PostgreSQL 15 | 5432 | Entidades: usuarios, alertas, fuentes, notificaciones |
-| Motor de búsqueda | Elasticsearch 8.12 | 9200 | Indexación y búsqueda de noticias RSS |
+| Backend API | FastAPI + Python | 8000 | Lógica de negocio, API REST, motor RSS, persistencia en memoria |
+| Motor de búsqueda | Elasticsearch 8.12 | 9200 | Indexación y búsqueda de noticias RSS (única persistencia en disco) |
+
+> **Nota:** PostgreSQL no forma parte de la arquitectura del proyecto.
+> Las entidades del sistema se mantienen en memoria dentro del proceso del
+> backend. Ver [ADR 0004](adr/0004-persistencia-in-memory.md).
+
+```
+┌────────────────────────────────────────────────────────┐
+│  Docker Compose                                        │
+│                                                        │
+│  ┌─────────────────┐   HTTP/JSON   ┌───────────────┐  │
+│  │    Frontend     │◄─────────────►│    Backend    │  │
+│  │  React + Vite   │  puerto 5173  │    FastAPI    │  │
+│  └─────────────────┘               │  puerto 8000  │  │
+│                                    │               │  │
+│                                    │ ┌───────────┐ │  │
+│                                    │ │  Memory   │ │  │
+│                                    │ │  Stores   │ │  │
+│                                    │ │  (dicts)  │ │  │
+│                                    │ └─────┬─────┘ │  │
+│                                    └───────┼───────┘  │
+│                                            │ puerto    │
+│                                            │ 9200      │
+│                                    ┌───────▼───────┐  │
+│                                    │ Elasticsearch │  │
+│                                    │     8.12      │  │
+│                                    │  (noticias)   │  │
+│                                    └───────────────┘  │
+└────────────────────────────────────────────────────────┘
+
+Comunicaciones externas:
+  Backend → Canales RSS externos  (HTTP GET, feedparser)
+  Backend → Servidor SMTP         (correos verificación y alertas)
+```
 
 ---
 
 ### 2.3 Nivel 3 — Componentes del Backend
 
 ```
-Backend API (FastAPI)
+Backend API (FastAPI — app/main.py)
 │
-├── app/
-│   ├── data/
-│   │   ├── rss_seed.json       ← Semilla de datos estáticos (fuentes, canales y categorías)
-│   │
-│   ├── core/
-│   │   └── security.py         ← Creacion de tokens y verificación por email
-│   │
-│   ├── main.py                 ← Esqueleto de la API
-│         │ scheduler/          ← Motor de captura RSS
-│         │ rss_fetcher_engine  ← Lectura de canales RSS (expresión cron)
-│         │ radar               ← Búsquedas en Elastic (multi_match) y generación de notificaciones
+├── Modelos Pydantic (definidos en main.py)
+│   ├── User / UserInDB / UserCreate / UserUpdate
+│   ├── Alert / AlertCreate / AlertUpdate
+│   ├── InformationSource / RSSChannel / Category
+│   ├── Notification / Stats / Role
+│   └── LoginRequest / TokenResponse
+│
+├── In-Memory Stores (estado global del proceso)
+│   ├── users_store:               dict[int, UserInDB]
+│   ├── alerts_store:              dict[int, Alert]
+│   ├── roles_store:               dict[int, Role]
+│   ├── categories_store:          dict[int, Category]
+│   ├── information_sources_store: dict[int, InformationSource]
+│   ├── rss_channels_store:        dict[int, RSSChannel]
+│   ├── notifications_store:       dict[int, Notification]
+│   └── stats_store:               dict[int, Stats]
+│
+├── Inicialización (startup)
+│   └── create_seed_data()  ← carga rss_seed.json en memoria al arrancar
+│
+├── Endpoints API REST (/api/v1/...)
+│   ├── /auth                                        → login, register, verify
+│   ├── /users                                       → CRUD usuarios
+│   ├── /roles                                       → CRUD roles
+│   ├── /categories                                  → CRUD categorías IPTC
+│   ├── /users/{id}/alerts                           → CRUD alertas por usuario
+│   ├── /users/{id}/alerts/{id}/notifications        → CRUD notificaciones
+│   ├── /information-sources                         → CRUD fuentes
+│   ├── /information-sources/{id}/rss-channels       → CRUD canales RSS
+│   └── /stats                                       → estadísticas globales
+│
+├── Motor RSS (asyncio background task)
+│   └── rss_fetcher_engine()
+│       ├── Descarga feeds con feedparser cada 30s
+│       ├── Indexa artículos en Elasticsearch (índice: newsradar_articles)
+│       └── Cruza con alertas activas → genera Notifications en memoria
+│
+└── core/
+    └── security.py  ← bcrypt, JWT, create_verification_token,
+                        send_verification_email (smtplib)
 ```
 
 ---
 
 ## 3. Decisiones arquitectónicas
 
-Las decisiones de arquitectura están documentadas como ADRs en `/docs/adr/`:
-
 | ADR | Decisión | Estado |
 |---|---|---|
 | [0001](adr/0001-framework-backend-fastapi.md) | Framework backend: FastAPI + Pydantic V2 | Aceptado |
 | [0002](adr/0002-autenticacion-jwt.md) | Autenticación: JWT stateless | Aceptado |
 | [0003](adr/0003-verificacion-email-smtplib-mailtrap.md) | Email: smtplib + Mailtrap | Aceptado |
+| [0004](adr/0004-persistencia-in-memory.md) | Persistencia: in-memory stores (Python dict) | Aceptado |
 | [0005](adr/0005-frontend-react-vite.md) | Frontend: React 19 + Vite | Aceptado |
 | [0006](adr/0006-elasticsearch-indexacion-noticias.md) | Motor de búsqueda: Elasticsearch 8.12 | Aceptado |
 | [0007](adr/0007-frontend-bootstrap-react-router.md) | UI: Bootstrap 5 + React Router | Aceptado |
 | [0008](adr/0008-calidad-codigo-ruff-ty.md) | Calidad: Ruff + Ty | Aceptado |
 | [0009](adr/0009-estrategia-testing-pytest-vitest-playwright.md) | Testing: Pytest + Vitest + Playwright | Aceptado |
-| [0010](adr/0010-migraciones-bd-alembic.md) | Migraciones: Alembic | Aceptado |
+| [0010](adr/0010-migraciones-bd-alembic.md) | ~~Migraciones: Alembic~~ | Supersedido por ADR 0004 |
 | [0011](adr/0011-pipeline-cicd-github-actions.md) | CI/CD: GitHub Actions | Aceptado |
 | [0012](adr/0012-seguridad-scanning-pip-audit-trivy-sonarqube.md) | Seguridad: pip-audit + Trivy + SonarQube | Aceptado |
 
@@ -112,19 +178,53 @@ Las decisiones de arquitectura están documentadas como ADRs en `/docs/adr/`:
 
 ## 4. Modelo de datos
 
-### 4.1 Documentos indexados (Elasticsearch — índice `newsradar_news`)
+### 4.1 Entidades en memoria (proceso Backend)
+
+Los datos persisten únicamente durante el ciclo de vida del proceso. Al
+reiniciar el servidor, las entidades se recargan desde `rss_seed.json`.
+
+```
+users_store
+  id              int   (autoincremental)
+  email           str   (único)
+  password        str   (hash bcrypt)
+  first_name      str
+  last_name       str
+  organization    str
+  role_ids        list[int]
+  is_verified     bool  (default: False)
+
+alerts_store
+  id              int
+  user_id         int   → users_store
+  name            str
+  descriptors     list[str]   (3–10 palabras clave)
+  categories      list[AlertCategoryItem]  (código + label IPTC)
+  cron_expression str
+
+rss_channels_store
+  id                     int
+  information_source_id  int  → information_sources_store
+  url                    str
+  category_id            int  → categories_store
+
+notifications_store
+  id         int
+  alert_id   int  → alerts_store
+  timestamp  datetime
+  metrics    list[Metric]
+```
+
+### 4.2 Documentos indexados (Elasticsearch — índice `newsradar_articles`)
 
 ```json
 {
-  "titulo": "string",
-  "resumen": "string",
-  "url": "string",
-  "fuente": "string",
-  "medio": "string",
-  "categoria_iptc": "string",
-  "fecha_publicacion": "date",
-  "fecha_captura": "date",
-  "alerta_id": "integer"
+  "title":        "string",
+  "link":         "string  (ID en Elastic — evita duplicados)",
+  "summary":      "string",
+  "published_at": "date",
+  "channel_id":   "integer",
+  "category_id":  "integer"
 }
 ```
 
@@ -132,30 +232,23 @@ Las decisiones de arquitectura están documentadas como ADRs en `/docs/adr/`:
 
 ## 5. Flujos principales
 
-### 5.1 Captura y notificación (Sprint 3)
+### 5.1 Captura y notificación (motor RSS)
 
 ```
-Scheduler (cron)
+asyncio background task (cada 30s en desarrollo)
     │
     ▼
-Leer canal RSS ──► Parsear ítems ──► ¿Contiene palabra clave?
-                                              │
-                              NO ─────────────┘
-                              SÍ
-                               │
-                               ▼
-                    Clasificar categoría IPTC
-                               │
-                               ▼
-                    Indexar en Elasticsearch
-                               │
-                               ▼
-                    Generar Notificación
-                               │
-                    ┌──────────┴──────────┐
-                    ▼                     ▼
-             Buzón interno          Email al usuario
-                                        (SMTP)
+Para cada canal en rss_channels_store:
+    │
+    ├── feedparser.parse(channel.url)
+    └── es_client.index(index="newsradar_articles", id=entry.link, doc=...)
+
+Para cada alerta en alerts_store:
+    │
+    ├── Query Elasticsearch: multi_match sobre title+summary
+    │   con filtro published_at >= now-15m
+    │
+    └── Si hay hits → Notification en notifications_store
 ```
 
 ### 5.2 Registro de usuario
@@ -164,20 +257,38 @@ Leer canal RSS ──► Parsear ítems ──► ¿Contiene palabra clave?
 POST /api/v1/auth/register
     │
     ▼
-Validar datos (Pydantic) ──► ¿Email ya existe? ──► 400 Bad Request
+Validar (Pydantic) ──► ¿Email ya existe? ──► 409 Conflict
     │
    NO
     ▼
-Crear usuario (is_verified=False, rol=LECTOR)
+Crear UserInDB en users_store (is_verified=False)
     │
     ▼
-BackgroundTask: token (type=email_verification, exp=24h)
+create_verification_token(email)  →  JWT (exp=24h)
     │
     ▼
-Enviar email (smtplib → Mailtrap)
+send_verification_email()  →  smtplib → Mailtrap
     │
     ▼
 201 Created
+```
+
+### 5.3 Login
+
+```
+POST /api/v1/auth/login
+    │
+    ▼
+Buscar usuario en users_store por email
+    │
+    ▼
+verify_password(payload.password, user.password)  ← bcrypt
+    │
+    ▼
+Generar UUID token → active_tokens[token] = user.id
+    │
+    ▼
+200 OK  { access_token, token_type: "bearer" }
 ```
 
 ---
@@ -187,31 +298,39 @@ Enviar email (smtplib → Mailtrap)
 ### 6.1 Levantar el entorno de desarrollo
 
 ```bash
-# Bases de datos (PostgreSQL + Elasticsearch)
-cd Backend && docker-compose up -d
+# Solo Elasticsearch (PostgreSQL no requerido)
+cd Backend && docker compose up -d
 
 # Backend API
-cd Backend && python -m uvicorn app.main:app --reload
+cd Backend && pip install -r requirements.txt
+python -m uvicorn app.main:app --reload
 
 # Frontend
 cd Frontend && npm install && npm run dev
 ```
 
+O con el Makefile desde la raíz del repositorio:
+
+```bash
+make up   # Levanta Elasticsearch
+make ci   # Pipeline CI completo en local
+```
+
 ### 6.2 Variables de entorno requeridas (`Backend/.env`)
 
 ```
-DATABASE_URL=postgresql+asyncpg://newsradar_admin:<pass>@localhost:5432/newsradar_db
 ELASTICSEARCH_URL=http://localhost:9200
 SECRET_KEY=<clave_aleatoria_segura>
 ACCESS_TOKEN_EXPIRE_MINUTES=30
-MAIL_SERVER=sandbox.smtp.mailtrap.io
-MAIL_PORT=587
+MAILTRAP_HOST=sandbox.smtp.mailtrap.io
+MAILTRAP_PORT=587
 MAIL_USERNAME=<usuario_mailtrap>
 MAIL_PASSWORD=<contraseña_mailtrap>
 MAIL_FROM=noreply@newsradar.local
 ```
 
-> El fichero `.env` está en `.gitignore` y nunca se sube al repositorio.
+> `DATABASE_URL` ya no es necesaria. El fichero `.env` está en `.gitignore`
+> y nunca se sube al repositorio.
 
 ---
 
@@ -219,12 +338,12 @@ MAIL_FROM=noreply@newsradar.local
 
 | Atributo | Mecanismo |
 |---|---|
-| Mantenibilidad | Arquitectura en capas; responsabilidades separadas por módulo |
-| Testabilidad | Inyección de dependencias FastAPI; mocks con pytest |
+| Mantenibilidad | Modelos Pydantic como única fuente de verdad para entidades |
+| Testabilidad | In-memory stores permiten tests sin servicios externos; mocks con pytest |
 | Seguridad | JWT, bcrypt, verificación de email, roles GESTOR/LECTOR |
-| Escalabilidad | Modelo asíncrono (asyncpg + AsyncSession) |
-| Observabilidad | SonarQube (Sprint 5); health check en `/health` |
-| Desplegabilidad | Docker Compose; pipeline CI/CD GitHub Actions (Sprint 4) |
+| Simplicidad operativa | Sin ORM ni migraciones; arranque con un único proceso uvicorn |
+| Observabilidad | SonarQube (Sprint 5); health check en `/api/v1/health` |
+| Desplegabilidad | Docker Compose (solo Elasticsearch); pipeline CI/CD GitHub Actions |
 
 ---
 
@@ -233,3 +352,4 @@ MAIL_FROM=noreply@newsradar.local
 | Versión | Fecha | Cambio |
 |---|---|---|
 | 1.0 | 2026-03-24 | Versión inicial tras Sprints 0 y 1 |
+| 1.1 | 2026-04-08 | Eliminación de PostgreSQL/SQLAlchemy. Persistencia in-memory (ADR 0004). ADR 0010 marcado como supersedido. Diagramas, modelo de datos y variables de entorno sincronizados con el código real. |
