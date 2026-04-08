@@ -1,5 +1,6 @@
-"""Unit tests for app.core.security — password hashing and JWT tokens."""
+"""Unit tests for app.core.security — password hashing, JWT tokens, and email."""
 
+import unittest.mock
 from datetime import timedelta
 
 import pytest
@@ -9,7 +10,9 @@ from app.core.security import (
     ALGORITHM,
     SECRET_KEY,
     create_access_token,
+    create_verification_token,
     get_password_hash,
+    send_verification_email,
     verify_password,
 )
 
@@ -65,3 +68,70 @@ class TestAccessToken:
         )
         with pytest.raises(JWTError):
             jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+
+@pytest.mark.unit
+class TestVerificationToken:
+    def test_create_verification_token(self):
+        token = create_verification_token("user@example.com")
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        assert payload["sub"] == "user@example.com"
+        assert "exp" in payload
+
+    def test_verification_token_expiry(self):
+
+        token = create_verification_token("user@example.com")
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        assert payload["sub"] == "user@example.com"
+
+
+@pytest.mark.unit
+class TestSendVerificationEmail:
+    @unittest.mock.patch("app.core.security.smtplib.SMTP")
+    @unittest.mock.patch("app.core.security.load_dotenv")
+    def test_send_email_success(self, mock_load_dotenv, mock_smtp):
+        mock_server = unittest.mock.MagicMock()
+        mock_smtp.return_value.__enter__.return_value = mock_server
+
+        send_verification_email("user@example.com", "test-token-123")
+
+        mock_load_dotenv.assert_called_once()
+        mock_server.ehlo.assert_called()
+        mock_server.starttls.assert_called()
+        mock_server.login.assert_called()
+        mock_server.send_message.assert_called_once()
+
+    @unittest.mock.patch("app.core.security.smtplib.SMTP")
+    @unittest.mock.patch("app.core.security.load_dotenv")
+    def test_send_email_connection_error(self, mock_load_dotenv, mock_smtp):
+        mock_smtp.side_effect = Exception("Connection refused")
+
+        send_verification_email("user@example.com", "test-token-123")
+
+        mock_load_dotenv.assert_called_once()
+        mock_smtp.assert_called_once()
+
+    @unittest.mock.patch("app.core.security.smtplib.SMTP")
+    @unittest.mock.patch("app.core.security.load_dotenv")
+    def test_send_email_smtp_error(self, mock_load_dotenv, mock_smtp):
+        mock_server = unittest.mock.MagicMock()
+        mock_server.send_message.side_effect = Exception("SMTP error")
+        mock_smtp.return_value.__enter__.return_value = mock_server
+
+        send_verification_email("user@example.com", "test-token-123")
+
+        mock_load_dotenv.assert_called_once()
+        mock_server.send_message.assert_called_once()
+
+    @unittest.mock.patch("app.core.security.smtplib.SMTP")
+    @unittest.mock.patch("app.core.security.load_dotenv")
+    def test_email_contains_correct_recipient(self, mock_load_dotenv, mock_smtp):
+        mock_server = unittest.mock.MagicMock()
+        mock_smtp.return_value.__enter__.return_value = mock_server
+
+        send_verification_email("user@example.com", "my-secret-token")
+
+        sent_msg = mock_server.send_message.call_args[0][0]
+        assert sent_msg["To"] == "user@example.com"
+        assert sent_msg["From"] == "noreply@newsradar.com"
+        assert sent_msg["Subject"] == "NEWSRADAR - Verifica tu cuenta"

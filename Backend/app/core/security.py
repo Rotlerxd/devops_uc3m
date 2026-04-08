@@ -1,14 +1,15 @@
+"""Utilidades de seguridad para hashing, JWT y envío de emails de verificación."""
+
 import os
 import smtplib
 from datetime import UTC, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+
 from dotenv import load_dotenv
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
+from fastapi.security import HTTPBearer
+from jose import jwt
 from passlib.context import CryptContext
-from sqlalchemy.orm import Session
 
 # --- Variables de entorno ---
 
@@ -31,12 +32,12 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def get_password_hash(password: str) -> str:
-    """Recibe la contraseña en texto plano y devuelve el hash irrompible."""
+    """Devuelve el hash seguro de una contraseña en texto plano."""
     return pwd_context.hash(password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Compara la contraseña plana con el hash de la base de datos."""
+    """Comprueba si una contraseña en claro coincide con su hash."""
     return pwd_context.verify(plain_password, hashed_password)
 
 
@@ -44,14 +45,14 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def create_verification_token(email: str) -> str:
-    """Genera un JWT con el email del usuario y una caducidad de 24 horas."""
+    """Genera un JWT de verificación de email con validez limitada."""
     expire = datetime.now(UTC) + timedelta(hours=VERIFICATION_TOKEN_EXPIRE_HOURS)
     to_encode = {"exp": expire, "sub": email}
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
-    """Genera un JWT de sesión para el usuario."""
+    """Genera un token JWT de acceso para autenticación de sesión."""
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.now(UTC) + expires_delta
@@ -65,9 +66,9 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
 
 
 def send_verification_email(to_email: str, token: str):
-    """Envía el correo de verificación usando el SMTP de Mailtrap."""
+    """Envía el correo de verificación de cuenta vía SMTP."""
     load_dotenv()
-    
+
     msg = MIMEMultipart()
     msg["Subject"] = "NEWSRADAR - Verifica tu cuenta"
     msg["From"] = "noreply@newsradar.com"

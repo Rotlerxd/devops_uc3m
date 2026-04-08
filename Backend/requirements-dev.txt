@@ -9,5 +9,10 @@ factory-boy>=3.3
 ruff>=0.8
 pip-audit>=2.7
 
+# Documentation
+mkdocs>=1.6
+mkdocs-material>=9.5
+mkdocstrings[python]>=0.30
+
 # Migrations
 alembic>=1.14

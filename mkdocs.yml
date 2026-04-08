@@ -1,0 +1,47 @@
+site_name: NEWSRADAR Docs
+site_description: Documentación técnica de NEWSRADAR
+repo_url: https://github.com/Rotlerxd/devops_uc3m
+repo_name: Rotlerxd/devops_uc3m
+
+theme:
+  name: material
+  language: es
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - Backend
+          options:
+            show_root_heading: true
+            show_root_full_path: false
+            show_source: false
+
+nav:
+  - Inicio: index.md
+  - Requisitos: requirements.md
+  - Arquitectura: architecture.md
+  - Backend:
+      - Documentación de docstrings: backend/docstrings.md
+      - Referencia API Python: backend/api-reference.md
+  - Desarrollo:
+      - Calidad: development/quality.md
+      - Testing: development/testing.md
+  - Despliegue:
+      - CI/CD: deployment/cicd.md
+  - ADR:
+      - 0001 Framework backend FastAPI: adr/0001-framework-backend-fastapi.md
+      - 0002 Autenticación JWT: adr/0002-autenticacion-jwt.md
+      - 0003 Verificación email con Mailtrap: adr/0003-verificacion-email-smtplib-mailtrap.md
+      - 0004 Persistencia en memoria: adr/0004-persistencia-en-memoria.md
+      - 0005 Frontend React + Vite: adr/0005-frontend-react-vite.md
+      - 0006 Elasticsearch indexación noticias: adr/0006-elasticsearch-indexacion-noticias.md
+      - 0007 Frontend Bootstrap + React Router: adr/0007-frontend-bootstrap-react-router.md
+      - 0008 Calidad Ruff + Ty: adr/0008-calidad-codigo-ruff-ty.md
+      - 0009 Estrategia de testing: adr/0009-estrategia-testing-pytest-vitest-playwright.md
+      - 0010 Migraciones Alembic (obsoleto): adr/0010-migraciones-bd-alembic-(obsoleto).md
+      - 0011 Pipeline CI/CD: adr/0011-pipeline-cicd-github-actions.md
+      - 0012 Seguridad scanning: adr/0012-seguridad-scanning-pip-audit-trivy-sonarqube.md
+      - 0013 Documentación backend con MkDocs: adr/0013-documentacion-backend-mkdocs-docstrings.md

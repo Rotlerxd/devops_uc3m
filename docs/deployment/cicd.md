@@ -41,6 +41,12 @@ push/PR → ┌──────────────┐
 │  SonarQube  │ │  Trivy   │
 │  Analysis   │ │  Scan    │
 └─────────────┘ └──────────┘
+         │
+         ▼
+   ┌──────────────┐
+   │ Docs MkDocs  │
+   │ Build/Deploy │
+   └──────────────┘
 ```
 
 ---
@@ -76,6 +82,17 @@ push/PR → ┌──────────────┐
 |---|---|
 | `build-and-push` | Build and push Docker image to GHCR |
 | `deploy` | Placeholder for deployment steps |
+
+### docs.yml — Documentation pipeline
+
+**Triggers:** push to `main`, pull requests to `main`, manual dispatch
+
+**Jobs:**
+
+| Job | What it does |
+|---|---|
+| `build-docs` | Instala dependencias, ejecuta `mkdocs build --strict` y valida docstrings |
+| `deploy-docs` | Publica el sitio en GitHub Pages (solo en push a `main`) |
 
 ---
 
