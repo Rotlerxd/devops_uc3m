@@ -12,6 +12,7 @@ from uuid import uuid4
 import feedparser
 from elasticsearch import Elasticsearch
 from fastapi import Depends, FastAPI, HTTPException, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field, HttpUrl
@@ -46,6 +47,14 @@ app = FastAPI(
     title="NewsRadar API",
     version="1.0.0",
     description="API REST para gestión de usuarios, alertas, notificaciones, fuentes y canales RSS.",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], 
+    allow_credentials=True,
+    allow_methods=["*"], 
+    allow_headers=["*"], 
 )
 
 API_PREFIX = "/api/v1"
