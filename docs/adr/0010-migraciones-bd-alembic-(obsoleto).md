@@ -5,7 +5,7 @@
 - **Autores:** Equipo DevOps (Konstantin Rannev, Álvaro Rodriguez)
 - **Reemplaza a:** —
 - **Reemplazado por:** —
-- **Relacionado con:** [ADR 0004](0004-persistencia-en-memoria)
+- **Relacionado con:** [ADR 0004](0004-persistencia-en-memoria.md)
 
 ---
 
