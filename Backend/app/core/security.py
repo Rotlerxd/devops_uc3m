@@ -5,12 +5,11 @@ import smtplib
 from datetime import UTC, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+
 from dotenv import load_dotenv
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
+from fastapi.security import HTTPBearer
+from jose import jwt
 from passlib.context import CryptContext
-from sqlalchemy.orm import Session
 
 # --- Variables de entorno ---
 
@@ -69,7 +68,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
 def send_verification_email(to_email: str, token: str):
     """Envía el correo de verificación de cuenta vía SMTP."""
     load_dotenv()
-    
+
     msg = MIMEMultipart()
     msg["Subject"] = "NEWSRADAR - Verifica tu cuenta"
     msg["From"] = "noreply@newsradar.com"
