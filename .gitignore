@@ -18,6 +18,7 @@ env/
 .coverage
 htmlcov/
 .pytest_cache/
+site/
 
 # Linting / Typing
 .ruff_cache/

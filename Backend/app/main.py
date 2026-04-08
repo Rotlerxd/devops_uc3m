@@ -1,3 +1,5 @@
+"""API backend de NewsRadar con modelos, endpoints y motor RSS en memoria."""
+
 from __future__ import annotations
 
 import asyncio
@@ -26,7 +28,7 @@ es_client = Elasticsearch(ELASTICSEARCH_URL)
 
 
 def check_elastic_connection():
-    """Hace un 'ping' a Elasticsearch para comprobar que está vivo"""
+    """Comprueba que Elasticsearch responde durante el arranque."""
     try:
         # .ping() devuelve True si el clúster responde
         if es_client.ping():
@@ -255,12 +257,14 @@ counters = {
 
 
 def next_id(counter_key: str) -> int:
+    """Devuelve el siguiente identificador autoincremental para una entidad."""
     value = counters[counter_key]
     counters[counter_key] += 1
     return value
 
 
 def ensure_role_ids_exist(role_ids: list[int]) -> None:
+    """Valida que todos los IDs de rol existen en memoria."""
     missing = [role_id for role_id in role_ids if role_id not in roles_store]
     if missing:
         raise HTTPException(
@@ -270,11 +274,13 @@ def ensure_role_ids_exist(role_ids: list[int]) -> None:
 
 
 def ensure_user_exists(user_id: int) -> None:
+    """Lanza 404 si el usuario no existe."""
     if user_id not in users_store:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
 
 def ensure_alert_for_user(user_id: int, alert_id: int) -> Alert:
+    """Obtiene una alerta de un usuario o lanza 404 si no corresponde."""
     alert = alerts_store.get(alert_id)
     if not alert or alert.user_id != user_id:
         raise HTTPException(status_code=404, detail="Alerta no encontrada para el usuario")
@@ -282,6 +288,7 @@ def ensure_alert_for_user(user_id: int, alert_id: int) -> Alert:
 
 
 def ensure_notification_for_alert(alert_id: int, notification_id: int) -> Notification:
+    """Obtiene una notificación de una alerta o lanza 404."""
     notification = notifications_store.get(notification_id)
     if not notification or notification.alert_id != alert_id:
         raise HTTPException(status_code=404, detail="Notificación no encontrada para la alerta")
@@ -289,16 +296,19 @@ def ensure_notification_for_alert(alert_id: int, notification_id: int) -> Notifi
 
 
 def ensure_information_source_exists(source_id: int) -> None:
+    """Lanza 404 si la fuente de información no existe."""
     if source_id not in information_sources_store:
         raise HTTPException(status_code=404, detail="Fuente de información no encontrada")
 
 
 def ensure_category_exists(category_id: int) -> None:
+    """Lanza 404 si la categoría no existe."""
     if category_id not in categories_store:
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
 
 
 def ensure_rss_for_source(source_id: int, channel_id: int) -> RSSChannel:
+    """Obtiene un canal RSS de una fuente concreta o lanza 404."""
     channel = rss_channels_store.get(channel_id)
     if not channel or channel.information_source_id != source_id:
         raise HTTPException(status_code=404, detail="Canal RSS no encontrado para la fuente")
@@ -306,6 +316,7 @@ def ensure_rss_for_source(source_id: int, channel_id: int) -> RSSChannel:
 
 
 def sanitize_user(user: UserInDB) -> User:
+    """Devuelve la representación pública de usuario sin contraseña."""
     return User(
         id=user.id,
         email=user.email,
@@ -319,6 +330,7 @@ def sanitize_user(user: UserInDB) -> User:
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> UserInDB:
+    """Autentica el token bearer y devuelve el usuario asociado."""
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Token inválido o ausente")
 
@@ -334,6 +346,7 @@ def get_current_user(
 
 
 def create_seed_data() -> None:
+    """Inicializa roles, usuario admin y semilla de fuentes/canales RSS."""
     if roles_store:
         return
 
@@ -403,6 +416,7 @@ def create_seed_data() -> None:
 
 @app.on_event("startup")
 def on_startup() -> None:
+    """Ejecuta inicialización de datos y arranca el motor RSS."""
     create_seed_data()
     check_elastic_connection()
     _ = asyncio.create_task(rss_fetcher_engine())
@@ -410,11 +424,13 @@ def on_startup() -> None:
 
 @app.get(f"{API_PREFIX}/health", tags=["system"])
 def health() -> dict:
+    """Devuelve estado de salud básico del servicio."""
     return {"status": "ok", "timestamp": datetime.now(UTC).isoformat()}
 
 
 @app.post(f"{API_PREFIX}/auth/login", response_model=TokenResponse, tags=["auth"])
 def login(payload: LoginRequest) -> TokenResponse:
+    """Autentica credenciales y emite token de sesión en memoria."""
     user = next((u for u in users_store.values() if u.email == payload.email), None)
     if user is None or user.password != payload.password:
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
@@ -426,6 +442,7 @@ def login(payload: LoginRequest) -> TokenResponse:
 
 @app.post(f"{API_PREFIX}/auth/register", response_model=User, tags=["auth"])
 def register(payload: UserCreate) -> User:
+    """Registra un usuario nuevo y envía email de verificación."""
     if any(user.email == payload.email for user in users_store.values()):
         raise HTTPException(status_code=409, detail="El email ya está registrado")
 
@@ -443,6 +460,7 @@ def register(payload: UserCreate) -> User:
 
 @app.get(f"{API_PREFIX}/auth/verify", tags=["auth"])
 def verify_email(token: str):
+    """Verifica un usuario validando el token JWT de verificación."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="Token de verificación inválido o expirado",
@@ -481,11 +499,13 @@ def verify_email(token: str):
 
 @app.get(f"{API_PREFIX}/users", response_model=list[User], tags=["users"])
 def list_users(_: UserInDB = Depends(get_current_user)) -> list[User]:
+    """Lista los usuarios registrados."""
     return [sanitize_user(user) for user in users_store.values()]
 
 
 @app.post(f"{API_PREFIX}/users", response_model=User, status_code=201, tags=["users"])
 def create_user(payload: UserCreate, _: UserInDB = Depends(get_current_user)) -> User:
+    """Crea un usuario desde la API protegida."""
     if any(user.email == payload.email for user in users_store.values()):
         raise HTTPException(status_code=409, detail="El email ya está registrado")
 
@@ -498,6 +518,7 @@ def create_user(payload: UserCreate, _: UserInDB = Depends(get_current_user)) ->
 
 @app.get(f"{API_PREFIX}/users/{{user_id}}", response_model=User, tags=["users"])
 def get_user(user_id: int, _: UserInDB = Depends(get_current_user)) -> User:
+    """Obtiene un usuario por su identificador."""
     user = users_store.get(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -506,6 +527,7 @@ def get_user(user_id: int, _: UserInDB = Depends(get_current_user)) -> User:
 
 @app.put(f"{API_PREFIX}/users/{{user_id}}", response_model=User, tags=["users"])
 def update_user(user_id: int, payload: UserUpdate, _: UserInDB = Depends(get_current_user)) -> User:
+    """Actualiza los campos permitidos de un usuario."""
     user = users_store.get(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -529,6 +551,7 @@ def update_user(user_id: int, payload: UserUpdate, _: UserInDB = Depends(get_cur
     tags=["users"],
 )
 def delete_user(user_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+    """Elimina un usuario y sus alertas/notificaciones asociadas."""
     if user_id not in users_store:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
@@ -544,11 +567,13 @@ def delete_user(user_id: int, _: UserInDB = Depends(get_current_user)) -> None:
 
 @app.get(f"{API_PREFIX}/roles", response_model=list[Role], tags=["roles"])
 def list_roles(_: UserInDB = Depends(get_current_user)) -> list[Role]:
+    """Lista todos los roles."""
     return list(roles_store.values())
 
 
 @app.post(f"{API_PREFIX}/roles", response_model=Role, status_code=201, tags=["roles"])
 def create_role(payload: RoleCreate, _: UserInDB = Depends(get_current_user)) -> Role:
+    """Crea un rol nuevo."""
     role_id = next_id("roles")
     role = Role(id=role_id, **payload.model_dump())
     roles_store[role_id] = role
@@ -557,6 +582,7 @@ def create_role(payload: RoleCreate, _: UserInDB = Depends(get_current_user)) ->
 
 @app.get(f"{API_PREFIX}/roles/{{role_id}}", response_model=Role, tags=["roles"])
 def get_role(role_id: int, _: UserInDB = Depends(get_current_user)) -> Role:
+    """Obtiene un rol por identificador."""
     role = roles_store.get(role_id)
     if not role:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
@@ -565,6 +591,7 @@ def get_role(role_id: int, _: UserInDB = Depends(get_current_user)) -> Role:
 
 @app.put(f"{API_PREFIX}/roles/{{role_id}}", response_model=Role, tags=["roles"])
 def update_role(role_id: int, payload: RoleUpdate, _: UserInDB = Depends(get_current_user)) -> Role:
+    """Actualiza un rol existente."""
     role = roles_store.get(role_id)
     if not role:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
@@ -581,6 +608,7 @@ def update_role(role_id: int, payload: RoleUpdate, _: UserInDB = Depends(get_cur
     tags=["roles"],
 )
 def delete_role(role_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+    """Elimina un rol si no está asignado a usuarios."""
     if role_id not in roles_store:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
 
@@ -600,6 +628,7 @@ def delete_role(role_id: int, _: UserInDB = Depends(get_current_user)) -> None:
     tags=["alerts"],
 )
 def list_user_alerts(user_id: int, current_user: UserInDB = Depends(get_current_user)) -> list[Alert]:
+    """Lista las alertas asociadas a un usuario."""
     ensure_user_exists(user_id)
 
     return [alert for alert in alerts_store.values() if alert.user_id == user_id]
@@ -612,6 +641,7 @@ def list_user_alerts(user_id: int, current_user: UserInDB = Depends(get_current_
     tags=["alerts"],
 )
 def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB = Depends(get_current_user)) -> Alert:
+    """Crea una alerta para el usuario autenticado validando reglas de negocio."""
     ensure_user_exists(user_id)
 
     # Validar que el usuario que crea la alerta es el mismo que está logueado
@@ -644,6 +674,7 @@ def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB
     tags=["alerts"],
 )
 def get_user_alert(user_id: int, alert_id: int, _: UserInDB = Depends(get_current_user)) -> Alert:
+    """Obtiene una alerta concreta de un usuario."""
     return ensure_alert_for_user(user_id, alert_id)
 
 
@@ -658,6 +689,7 @@ def update_user_alert(
     payload: AlertUpdate,
     _: UserInDB = Depends(get_current_user),
 ) -> Alert:
+    """Actualiza una alerta de usuario."""
     alert = ensure_alert_for_user(user_id, alert_id)
     updated = alert.model_copy(update=payload.model_dump(exclude_unset=True))
     alerts_store[alert_id] = updated
@@ -672,6 +704,7 @@ def update_user_alert(
     tags=["alerts"],
 )
 def delete_user_alert(user_id: int, alert_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+    """Elimina una alerta y sus notificaciones relacionadas."""
     ensure_alert_for_user(user_id, alert_id)
     notification_ids = [n.id for n in notifications_store.values() if n.alert_id == alert_id]
     for notification_id in notification_ids:
@@ -689,6 +722,7 @@ def list_alert_notifications(
     alert_id: int,
     _: UserInDB = Depends(get_current_user),
 ) -> list[Notification]:
+    """Lista notificaciones de una alerta."""
     ensure_alert_for_user(user_id, alert_id)
     return [item for item in notifications_store.values() if item.alert_id == alert_id]
 
@@ -705,6 +739,7 @@ def create_alert_notification(
     payload: NotificationCreate,
     _: UserInDB = Depends(get_current_user),
 ) -> Notification:
+    """Crea una notificación para una alerta concreta."""
     ensure_alert_for_user(user_id, alert_id)
     notification_id = next_id("notifications")
     notification = Notification(id=notification_id, alert_id=alert_id, **payload.model_dump())
@@ -723,6 +758,7 @@ def get_alert_notification(
     notification_id: int,
     _: UserInDB = Depends(get_current_user),
 ) -> Notification:
+    """Obtiene una notificación concreta de una alerta."""
     ensure_alert_for_user(user_id, alert_id)
     return ensure_notification_for_alert(alert_id, notification_id)
 
@@ -739,6 +775,7 @@ def update_alert_notification(
     payload: NotificationUpdate,
     _: UserInDB = Depends(get_current_user),
 ) -> Notification:
+    """Actualiza una notificación de alerta."""
     ensure_alert_for_user(user_id, alert_id)
     notification = ensure_notification_for_alert(alert_id, notification_id)
     updated = notification.model_copy(update=payload.model_dump(exclude_unset=True))
@@ -759,6 +796,7 @@ def delete_alert_notification(
     notification_id: int,
     _: UserInDB = Depends(get_current_user),
 ) -> None:
+    """Elimina una notificación de alerta."""
     ensure_alert_for_user(user_id, alert_id)
     ensure_notification_for_alert(alert_id, notification_id)
     notifications_store.pop(notification_id, None)
@@ -766,11 +804,13 @@ def delete_alert_notification(
 
 @app.get(f"{API_PREFIX}/categories", response_model=list[Category], tags=["categories"])
 def list_categories(_: UserInDB = Depends(get_current_user)) -> list[Category]:
+    """Lista categorías configuradas."""
     return list(categories_store.values())
 
 
 @app.post(f"{API_PREFIX}/categories", response_model=Category, status_code=201, tags=["categories"])
 def create_category(payload: CategoryCreate, _: UserInDB = Depends(get_current_user)) -> Category:
+    """Crea una nueva categoría."""
     category_id = next_id("categories")
     category = Category(id=category_id, **payload.model_dump())
     categories_store[category_id] = category
@@ -779,6 +819,7 @@ def create_category(payload: CategoryCreate, _: UserInDB = Depends(get_current_u
 
 @app.get(f"{API_PREFIX}/categories/{{category_id}}", response_model=Category, tags=["categories"])
 def get_category(category_id: int, _: UserInDB = Depends(get_current_user)) -> Category:
+    """Obtiene una categoría por identificador."""
     category = categories_store.get(category_id)
     if not category:
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
@@ -787,6 +828,7 @@ def get_category(category_id: int, _: UserInDB = Depends(get_current_user)) -> C
 
 @app.put(f"{API_PREFIX}/categories/{{category_id}}", response_model=Category, tags=["categories"])
 def update_category(category_id: int, payload: CategoryUpdate, _: UserInDB = Depends(get_current_user)) -> Category:
+    """Actualiza una categoría existente."""
     category = categories_store.get(category_id)
     if not category:
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
@@ -803,6 +845,7 @@ def update_category(category_id: int, payload: CategoryUpdate, _: UserInDB = Dep
     tags=["categories"],
 )
 def delete_category(category_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+    """Elimina una categoría si no está asociada a canales RSS."""
     if category_id not in categories_store:
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
 
@@ -819,6 +862,7 @@ def delete_category(category_id: int, _: UserInDB = Depends(get_current_user)) -
     tags=["information-sources"],
 )
 def list_information_sources(_: UserInDB = Depends(get_current_user)) -> list[InformationSource]:
+    """Lista fuentes de información."""
     return list(information_sources_store.values())
 
 
@@ -832,6 +876,7 @@ def create_information_source(
     payload: InformationSourceCreate,
     _: UserInDB = Depends(get_current_user),
 ) -> InformationSource:
+    """Crea una fuente de información."""
     source_id = next_id("information_sources")
     source = InformationSource(id=source_id, **payload.model_dump())
     information_sources_store[source_id] = source
@@ -844,6 +889,7 @@ def create_information_source(
     tags=["information-sources"],
 )
 def get_information_source(source_id: int, _: UserInDB = Depends(get_current_user)) -> InformationSource:
+    """Obtiene una fuente de información por identificador."""
     source = information_sources_store.get(source_id)
     if not source:
         raise HTTPException(status_code=404, detail="Fuente de información no encontrada")
@@ -860,6 +906,7 @@ def update_information_source(
     payload: InformationSourceUpdate,
     _: UserInDB = Depends(get_current_user),
 ) -> InformationSource:
+    """Actualiza una fuente de información existente."""
     source = information_sources_store.get(source_id)
     if not source:
         raise HTTPException(status_code=404, detail="Fuente de información no encontrada")
@@ -876,6 +923,7 @@ def update_information_source(
     tags=["information-sources"],
 )
 def delete_information_source(source_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+    """Elimina una fuente y sus canales RSS asociados."""
     if source_id not in information_sources_store:
         raise HTTPException(status_code=404, detail="Fuente de información no encontrada")
 
@@ -892,6 +940,7 @@ def delete_information_source(source_id: int, _: UserInDB = Depends(get_current_
     tags=["rss-channels"],
 )
 def list_source_channels(source_id: int, _: UserInDB = Depends(get_current_user)) -> list[RSSChannel]:
+    """Lista canales RSS de una fuente."""
     ensure_information_source_exists(source_id)
     return [channel for channel in rss_channels_store.values() if channel.information_source_id == source_id]
 
@@ -907,6 +956,7 @@ def create_source_channel(
     payload: RSSChannelCreate,
     _: UserInDB = Depends(get_current_user),
 ) -> RSSChannel:
+    """Crea un canal RSS para una fuente de información."""
     ensure_information_source_exists(source_id)
     ensure_category_exists(payload.category_id)
 
@@ -930,6 +980,7 @@ def get_source_channel(
     channel_id: int,
     _: UserInDB = Depends(get_current_user),
 ) -> RSSChannel:
+    """Obtiene un canal RSS concreto de una fuente."""
     ensure_information_source_exists(source_id)
     return ensure_rss_for_source(source_id, channel_id)
 
@@ -945,6 +996,7 @@ def update_source_channel(
     payload: RSSChannelUpdate,
     _: UserInDB = Depends(get_current_user),
 ) -> RSSChannel:
+    """Actualiza un canal RSS existente."""
     ensure_information_source_exists(source_id)
     channel = ensure_rss_for_source(source_id, channel_id)
 
@@ -969,6 +1021,7 @@ def delete_source_channel(
     channel_id: int,
     _: UserInDB = Depends(get_current_user),
 ) -> None:
+    """Elimina un canal RSS de una fuente."""
     ensure_information_source_exists(source_id)
     ensure_rss_for_source(source_id, channel_id)
     rss_channels_store.pop(channel_id, None)
@@ -976,11 +1029,13 @@ def delete_source_channel(
 
 @app.get(f"{API_PREFIX}/stats", response_model=list[Stats], tags=["stats"])
 def list_stats(_: UserInDB = Depends(get_current_user)) -> list[Stats]:
+    """Lista entradas de estadísticas globales."""
     return list(stats_store.values())
 
 
 @app.post(f"{API_PREFIX}/stats", response_model=Stats, status_code=201, tags=["stats"])
 def create_stats(payload: StatsCreate, _: UserInDB = Depends(get_current_user)) -> Stats:
+    """Crea una entrada de estadísticas."""
     stats_id = next_id("stats")
     stats = Stats(id=stats_id, **payload.model_dump())
     stats_store[stats_id] = stats
@@ -989,6 +1044,7 @@ def create_stats(payload: StatsCreate, _: UserInDB = Depends(get_current_user)) 
 
 @app.get(f"{API_PREFIX}/stats/{{stats_id}}", response_model=Stats, tags=["stats"])
 def get_stats(stats_id: int, _: UserInDB = Depends(get_current_user)) -> Stats:
+    """Obtiene estadísticas por identificador."""
     stats = stats_store.get(stats_id)
     if not stats:
         raise HTTPException(status_code=404, detail="Stats no encontrados")
@@ -997,6 +1053,7 @@ def get_stats(stats_id: int, _: UserInDB = Depends(get_current_user)) -> Stats:
 
 @app.put(f"{API_PREFIX}/stats/{{stats_id}}", response_model=Stats, tags=["stats"])
 def update_stats(stats_id: int, payload: StatsUpdate, _: UserInDB = Depends(get_current_user)) -> Stats:
+    """Actualiza una entrada de estadísticas."""
     stats = stats_store.get(stats_id)
     if not stats:
         raise HTTPException(status_code=404, detail="Stats no encontrados")
@@ -1014,14 +1071,14 @@ def update_stats(stats_id: int, payload: StatsUpdate, _: UserInDB = Depends(get_
     tags=["stats"],
 )
 def delete_stats(stats_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+    """Elimina una entrada de estadísticas."""
     if stats_id not in stats_store:
         raise HTTPException(status_code=404, detail="Stats no encontrados")
     stats_store.pop(stats_id, None)
 
 
 async def rss_fetcher_engine():
-    """Motor en segundo plano que descarga RSS y los indexa en Elasticsearch"""
-
+    """Ejecuta en bucle la captura RSS, indexación y generación de notificaciones."""
     # Esperamos un poco antes de arrancar la primera vez para dar tiempo a que cargue la semilla
     await asyncio.sleep(5)
 
