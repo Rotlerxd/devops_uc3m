@@ -104,7 +104,7 @@ Las decisiones de arquitectura están documentadas como ADRs en `/docs/adr/`:
 | [0007](adr/0007-frontend-bootstrap-react-router.md) | UI: Bootstrap 5 + React Router | Aceptado |
 | [0008](adr/0008-calidad-codigo-ruff-ty.md) | Calidad: Ruff + Ty | Aceptado |
 | [0009](adr/0009-estrategia-testing-pytest-vitest-playwright.md) | Testing: Pytest + Vitest + Playwright | Aceptado |
-| [0010](adr/0010-migraciones-bd-alembic.md) | Migraciones: Alembic | Aceptado |
+| [0010](adr/0010-migraciones-bd-alembic-(obsoleto)) | Migraciones: Alembic | Aceptado |
 | [0011](adr/0011-pipeline-cicd-github-actions.md) | CI/CD: GitHub Actions | Aceptado |
 | [0012](adr/0012-seguridad-scanning-pip-audit-trivy-sonarqube.md) | Seguridad: pip-audit + Trivy + SonarQube | Aceptado |
 
