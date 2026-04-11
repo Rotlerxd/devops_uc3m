@@ -216,6 +216,7 @@ class RSSChannel(RSSChannelBase):
 
 class StatsBase(BaseModel):
     metrics: list[Metric] = Field(default_factory=list)
+    total_news: int
 
 
 class StatsCreate(StatsBase):
@@ -658,7 +659,18 @@ def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permisos para crear alertas para otro usuario."
         )
-
+    nombres_roles = [
+        roles_store[rol_id].name.lower() 
+        for rol_id in current_user.role_ids 
+        if rol_id in roles_store
+    ]
+    
+    if "user" in nombres_roles and "admin" not in nombres_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Los lectores no tienen permisos para crear ni gestionar alertas."
+        )
+        
     # Validar regla: Límite máximo de 20 alertas por usuario
     user_alerts_count = sum(1 for a in alerts_store.values() if a.user_id == user_id)
     if user_alerts_count >= 20:
@@ -684,6 +696,19 @@ def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB
 )
 def get_user_alert(user_id: int, alert_id: int, _: UserInDB = Depends(get_current_user)) -> Alert:
     """Obtiene una alerta concreta de un usuario."""
+    nombres_roles = [
+        roles_store[rol_id].name.lower() 
+        for rol_id in current_user.role_ids 
+        if rol_id in roles_store
+    ]
+    
+    if "user" in nombres_roles and "admin" not in nombres_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Los lectores no tienen permisos para crear ni gestionar alertas."
+        )
+        
+        
     return ensure_alert_for_user(user_id, alert_id)
 
 
@@ -699,6 +724,18 @@ def update_user_alert(
     _: UserInDB = Depends(get_current_user),
 ) -> Alert:
     """Actualiza una alerta de usuario."""
+    nombres_roles = [
+        roles_store[rol_id].name.lower() 
+        for rol_id in current_user.role_ids 
+        if rol_id in roles_store
+    ]
+    
+    if "user" in nombres_roles and "admin" not in nombres_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Los lectores no tienen permisos para crear ni gestionar alertas."
+        )
+        
     alert = ensure_alert_for_user(user_id, alert_id)
     updated = alert.model_copy(update=payload.model_dump(exclude_unset=True))
     alerts_store[alert_id] = updated
@@ -715,6 +752,18 @@ def update_user_alert(
 def delete_user_alert(user_id: int, alert_id: int, _: UserInDB = Depends(get_current_user)) -> None:
     """Elimina una alerta y sus notificaciones relacionadas."""
     ensure_alert_for_user(user_id, alert_id)
+    nombres_roles = [
+        roles_store[rol_id].name.lower() 
+        for rol_id in current_user.role_ids 
+        if rol_id in roles_store
+    ]
+    
+    if "user" in nombres_roles and "admin" not in nombres_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Los lectores no tienen permisos para crear ni gestionar alertas."
+        )
+        
     notification_ids = [n.id for n in notifications_store.values() if n.alert_id == alert_id]
     for notification_id in notification_ids:
         notifications_store.pop(notification_id, None)
