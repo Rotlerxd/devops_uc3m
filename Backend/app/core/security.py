@@ -116,6 +116,61 @@ def send_verification_email(to_email: str, token: str):
     except Exception as e:
         print(f"Error al enviar el correo: {e}")
 
+def send_alert_email(to_email: str, alert_name: str, news_data):
+    """
+    Envía el correo de alerta de noticias siguiendo el formato estricto del Sprint 3.2.
+    """
+    load_dotenv()
+
+    msg = MIMEMultipart()
+    
+    # 1. ASUNTO ESTRICTO: “Actualización de <alerta> en <día/hora>”
+    now_str = datetime.now().strftime("%d/%m/%Y %H:%M")
+    msg["Subject"] = f"Actualización de {alert_name} en {now_str}"
+    msg["From"] = os.getenv("GMAIL_USER", "newsradar.app.noreply@gmail.com")
+    msg["To"] = to_email
+
+    # 2. CUERPO HTML (Siguiendo tu estilo pero con los datos requeridos)
+    html_items = ""
+    for n in news_data:
+        html_items += f"""
+        <div style="border-bottom: 1px solid #ddd; padding: 10px 0;">
+            <p><strong>{n.get('title', 'Sin título')}</strong></p>
+            <p><small>{n.get('published', 'N/A')} | <a href="{n.get('link')}">Ver noticia</a></small></p>
+        </div>
+        """
+
+    html = f"""
+    <html>
+        <body>
+            <h2>Actualización para tu alerta: {alert_name}</h2>
+            <p>Hemos encontrado {len(news_data)} noticias nuevas:</p>
+            {html_items}
+        </body>
+    </html>
+    """
+    
+    msg.attach(MIMEText(html, "html"))
+
+    try:
+        # Envío a Mailtrap (Desarrollo)
+        with smtplib.SMTP(MAILTRAP_HOST, MAILTRAP_PORT) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(MAILTRAP_USER, MAILTRAP_PASS)
+            server.send_message(msg)
+            print(f"[MAILTRAP] Alerta '{alert_name}' enviada a {to_email}")
+            
+        # Envío a Gmail (Producción)
+        with smtplib.SMTP(GMAIL_HOST, GMAIL_PORT) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(GMAIL_USER, GMAIL_PASS)
+            server.send_message(msg)
+            print(f"[GMAIL] Alerta '{alert_name}' enviada a {to_email}")
+
+    except Exception as e:
+        print(f"Error al enviar el correo de alerta: {e}")
 
 # --- DEPENDENCIAS DE AUTENTICACIÓN ---
 

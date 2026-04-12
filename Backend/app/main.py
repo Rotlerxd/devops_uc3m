@@ -20,6 +20,7 @@ from pydantic import BaseModel, EmailStr, Field, HttpUrl
 from app.core.security import (
     create_verification_token,
     send_verification_email,
+    send_alert_email,
 )
 
 ELASTICSEARCH_URL = "http://localhost:9200"
@@ -161,6 +162,7 @@ class Category(CategoryBase):
 class NotificationBase(BaseModel):
     timestamp: datetime
     metrics: list[Metric] = Field(default_factory=list)
+    iptc_category: str # Agregamos el campo de categoría IPTC para poder mostrarlo en las notificaciones sin necesidad de hacer join con la categoría original. Se llenará al crear la notificación a partir de la alerta y su categoría asociada.
 
 
 class NotificationCreate(NotificationBase):
@@ -1213,20 +1215,49 @@ async def rss_fetcher_engine():
 
                 # Elasticsearch devuelve el total de coincidencias en esta ruta
                 total_hits = resultados["hits"]["total"]["value"]
+                noticias_encontradas = resultados["hits"]["hits"]
 
                 # 3. Si hay coincidencias, creamos la notificación
                 if total_hits > 0:
                     print(f"[ALERTA DISPARADA] '{alert.name}' (User {alert.user_id}): {total_hits} coincidencias.")
-
-                    notif_id = next_id("notifications")
-                    nueva_notificacion = Notification(
-                        id=notif_id,
-                        alert_id=alert_id,
-                        timestamp=datetime.now(UTC),
-                        metrics=[Metric(name="noticias_encontradas", value=float(total_hits))],
-                    )
-                    notifications_store[notif_id] = nueva_notificacion
-                    stats_store[1].total_notifications += 1
+                    lista_noticias = []
+                    if alert.categories:
+                        # Si son diccionarios, sacamos el 'label' (ej: "Tecnología")
+                        # Si prefieres el código (ej: "TECH"), cambia cat.get('label') por cat.get('code')
+                        try:
+                             # Asumiendo que es un diccionario
+                             categoria_clasificada = ", ".join([cat.get('label', '') for cat in alert.categories])
+                        except AttributeError:
+                             # Por si resulta ser un objeto Pydantic y no un diccionario
+                             categoria_clasificada = ", ".join([cat.label for cat in alert.categories])
+                    else:
+                        categoria_clasificada = "General"
+                    
+                    for noticia in noticias_encontradas:
+                        datos_rss = noticia["_source"] # Aquí dentro están el título, resumen, etc.
+                        lista_noticias.append(datos_rss)
+                        notif_id = next_id("notifications")
+                        
+                        # Creamos la notificación en el buzón
+                        nueva_notificacion = Notification(
+                            id=notif_id,
+                            alert_id=alert.id, 
+                            timestamp=datetime.now(UTC),
+                            metrics=[Metric(name="noticias_encontradas", value=float(total_hits))],
+                            iptc_category=categoria_clasificada,
+                            
+                        )
+                        notifications_store[notif_id] = nueva_notificacion
+                        stats_store[1].total_notifications += 1
+                        
+                    # --- AQUÍ IRÁ LA LLAMADA PARA ENVIAR EL EMAIL ---
+                    usuario = users_store.get(alert.user_id)
+                    if usuario and usuario.email:
+                        send_alert_email(
+                            to_email=usuario.email, 
+                            alert_name=alert.name, 
+                            news_data=lista_noticias
+                        )
 
             except Exception as e:
                 print(f"[RADAR] Error consultando alerta '{alert.name}': {e}")
