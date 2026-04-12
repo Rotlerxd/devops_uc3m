@@ -16,8 +16,8 @@ from pydantic import BaseModel, EmailStr, Field, HttpUrl
 from app.core.security import (
     create_verification_token,
     send_verification_email,
-    send_alert_email,
-)
+    send_alert_email,)
+
 ELASTICSEARCH_URL = "http://localhost:9200"
 
 # 2. Instanciar el cliente global
@@ -47,7 +47,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], 
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
