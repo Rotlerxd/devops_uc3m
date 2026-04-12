@@ -334,6 +334,7 @@ def sanitize_user(user: UserInDB) -> User:
         last_name=user.last_name,
         organization=user.organization,
         role_ids=user.role_ids,
+        is_verified=user.is_verified, # Este campo se incluye para que el cliente sepa si el usuario está verificado o no
     )
 
 
@@ -481,7 +482,9 @@ def verify_email(token: str):
         email: str = payload.get("sub")
         if email is None:
             raise credentials_exception from None
-    except JWTError:
+        print(f"[VERIFY] Token decodificado, email: {email}")
+    except JWTError as e:
+        print(f"[VERIFY] Error decodificando token: {e}")
         raise credentials_exception from None
 
     # Buscamos al usuario en la BD
@@ -492,17 +495,19 @@ def verify_email(token: str):
             break
 
     if user is None:
+        print(f"[VERIFY] Usuario no encontrado para email: {email}")
         raise credentials_exception from None
 
     if user.is_verified:
+        print(f"[VERIFY] Usuario ya verificado: {email}")
         return {"msg": "El usuario ya estaba verificado"}
-
-    # Actualizamos el estado a verificado
-    user.is_verified = True
-    for u in users_store.values():
-        if u.email == email:
-            u.is_verified = True
-            break
+    
+    usuario_actualizado = user.model_copy(update={"is_verified": True})
+    users_store[user.id] = usuario_actualizado
+    
+    print(f"[VERIFY] Usuario verificado exitosamente: {email}")
+    user = users_store.get(2)
+    print(f"[VERIFY] Usuario actualizado en store: {user.email}, is_verified={user.is_verified}")
 
     return {"msg": "Cuenta verificada con éxito. Ya puedes iniciar sesión."}
 
