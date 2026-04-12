@@ -155,6 +155,7 @@ class TestNotificationModels:
             alert_id=1,
             timestamp=datetime.now(),
             metrics=[Metric(name="count", value=5.0)],
+            iptc_category="Tecnología",
         )
         assert notif.id == 1
         assert len(notif.metrics) == 1

@@ -133,5 +133,5 @@ class TestSendVerificationEmail:
 
         sent_msg = mock_server.send_message.call_args[0][0]
         assert sent_msg["To"] == "user@example.com"
-        assert sent_msg["From"] == "noreply@newsradar.com"
+        assert sent_msg["From"] == "newsradar.app.noreply@gmail.com"
         assert sent_msg["Subject"] == "NEWSRADAR - Verifica tu cuenta"

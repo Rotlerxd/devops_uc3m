@@ -100,13 +100,12 @@ def send_verification_email(to_email: str, token: str):
     """
     msg.attach(MIMEText(html, "html"))
     try:
-        with smtplib.SMTP(MAILTRAP_HOST, MAILTRAP_PORT) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(MAILTRAP_USER, MAILTRAP_PASS)
-            server.send_message(msg)
-            print(f"Correo de verificación enviado a Mailtrap{to_email}")
-            
+        # with smtplib.SMTP(MAILTRAP_HOST, MAILTRAP_PORT) as server:
+        #     server.ehlo()
+        #     server.starttls()
+        #     server.login(MAILTRAP_USER, MAILTRAP_PASS)
+        #     server.send_message(msg)
+        #     print(f"Correo de verificación enviado a Mailtrap{to_email}")
         with smtplib.SMTP(GMAIL_HOST, GMAIL_PORT) as server:
             server.ehlo()
             server.starttls()
@@ -123,7 +122,6 @@ def send_alert_email(to_email: str, alert_name: str, news_data):
     load_dotenv()
 
     msg = MIMEMultipart()
-    
     # 1. ASUNTO ESTRICTO: “Actualización de <alerta> en <día/hora>”
     now_str = datetime.now().strftime("%d/%m/%Y %H:%M")
     msg["Subject"] = f"Actualización de {alert_name} en {now_str}"
@@ -139,7 +137,6 @@ def send_alert_email(to_email: str, alert_name: str, news_data):
             <p><small>{n.get('published', 'N/A')} | <a href="{n.get('link')}">Ver noticia</a></small></p>
         </div>
         """
-
     html = f"""
     <html>
         <body>
@@ -149,18 +146,18 @@ def send_alert_email(to_email: str, alert_name: str, news_data):
         </body>
     </html>
     """
-    
+
     msg.attach(MIMEText(html, "html"))
 
     try:
         # Envío a Mailtrap (Desarrollo)
-        with smtplib.SMTP(MAILTRAP_HOST, MAILTRAP_PORT) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(MAILTRAP_USER, MAILTRAP_PASS)
-            server.send_message(msg)
-            print(f"[MAILTRAP] Alerta '{alert_name}' enviada a {to_email}")
-            
+        # with smtplib.SMTP(MAILTRAP_HOST, MAILTRAP_PORT) as server:
+        #     server.ehlo()
+        #     server.starttls()
+        #     server.login(MAILTRAP_USER, MAILTRAP_PASS)
+        #     server.send_message(msg)
+        #     print(f"[MAILTRAP] Alerta '{alert_name}' enviada a {to_email}")
+
         # Envío a Gmail (Producción)
         with smtplib.SMTP(GMAIL_HOST, GMAIL_PORT) as server:
             server.ehlo()
