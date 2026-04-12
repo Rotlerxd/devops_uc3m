@@ -1,14 +1,11 @@
 """API backend de NewsRadar con modelos, endpoints y motor RSS en memoria."""
-
 from __future__ import annotations
-
 import asyncio
 import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
-
 import feedparser
 from elasticsearch import Elasticsearch
 from fastapi import Depends, FastAPI, HTTPException, Response, status
@@ -16,13 +13,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field, HttpUrl
-
 from app.core.security import (
     create_verification_token,
     send_verification_email,
     send_alert_email,
 )
-
 ELASTICSEARCH_URL = "http://localhost:9200"
 
 # 2. Instanciar el cliente global
@@ -54,8 +49,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], 
     allow_credentials=True,
-    allow_methods=["*"], 
-    allow_headers=["*"], 
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 API_PREFIX = "/api/v1"
@@ -665,13 +660,13 @@ def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB
             status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permisos para crear alertas para otro usuario."
         )
     nombres_roles = [
-        roles_store[rol_id].name.lower() 
-        for rol_id in current_user.role_ids 
+        roles_store[rol_id].name.lower()
+        for rol_id in current_user.role_ids
         if rol_id in roles_store
     ]
     if "user" in nombres_roles and "admin" not in nombres_roles:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="Los lectores no tienen permisos para crear ni gestionar alertas."
         )
     # Validar regla: Límite máximo de 20 alertas por usuario
@@ -700,13 +695,13 @@ def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB
 def get_user_alert(user_id: int, alert_id: int, current_user: UserInDB = Depends(get_current_user)) -> Alert:
     """Obtiene una alerta concreta de un usuario."""
     nombres_roles = [
-        roles_store[rol_id].name.lower() 
-        for rol_id in current_user.role_ids 
+        roles_store[rol_id].name.lower()
+        for rol_id in current_user.role_ids
         if rol_id in roles_store
     ]
     if "user" in nombres_roles and "admin" not in nombres_roles:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="Los lectores no tienen permisos para crear ni gestionar alertas."
         )
     return ensure_alert_for_user(user_id, alert_id)
@@ -725,14 +720,14 @@ def update_user_alert(
 ) -> Alert:
     """Actualiza una alerta de usuario."""
     nombres_roles = [
-        roles_store[rol_id].name.lower() 
-        for rol_id in current_user.role_ids 
+        roles_store[rol_id].name.lower()
+        for rol_id in current_user.role_ids
         if rol_id in roles_store
     ]
 
     if "user" in nombres_roles and "admin" not in nombres_roles:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="Los lectores no tienen permisos para crear ni gestionar alertas."
         )
     alert = ensure_alert_for_user(user_id, alert_id)
@@ -752,13 +747,13 @@ def delete_user_alert(user_id: int, alert_id: int, current_user: UserInDB = Depe
     """Elimina una alerta y sus notificaciones relacionadas."""
     ensure_alert_for_user(user_id, alert_id)
     nombres_roles = [
-        roles_store[rol_id].name.lower() 
-        for rol_id in current_user.role_ids 
+        roles_store[rol_id].name.lower()
+        for rol_id in current_user.role_ids
         if rol_id in roles_store
     ]
     if "user" in nombres_roles and "admin" not in nombres_roles:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="Los lectores no tienen permisos para crear ni gestionar alertas."
         )
     notification_ids = [n.id for n in notifications_store.values() if n.alert_id == alert_id]
@@ -1235,7 +1230,7 @@ async def rss_fetcher_engine():
                         # Creamos la notificación en el buzón
                         nueva_notificacion = Notification(
                             id=notif_id,
-                            alert_id=alert.id, 
+                            alert_id=alert_id,
                             timestamp=datetime.now(UTC),
                             metrics=[Metric(name="noticias_encontradas", value=float(total_hits))],
                             iptc_category=categoria_clasificada,
@@ -1246,8 +1241,8 @@ async def rss_fetcher_engine():
                     usuario = users_store.get(alert.user_id)
                     if usuario and usuario.email:
                         send_alert_email(
-                            to_email=usuario.email, 
-                            alert_name=alert.name, 
+                            to_email=usuario.email,
+                            alert_name=alert.name,
                             news_data=lista_noticias
                         )
             except Exception as e:
