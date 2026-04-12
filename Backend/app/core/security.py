@@ -28,7 +28,7 @@ GMAIL_PORT = int(os.getenv("GMAIL_PORT", 587))
 GMAIL_USER = os.getenv("GMAIL_USER", "newsradar.app.noreply@gmail.com")
 GMAIL_PASS = os.getenv("GMAIL_PASS", "bhpjehrlnapjpzgj")
 
-#bhpj ehrl napj pzgj
+# bhpj ehrl napj pzgj
 
 # --- Configuración de bcrypt ---
 
@@ -115,6 +115,7 @@ def send_verification_email(to_email: str, token: str):
     except Exception as e:
         print(f"Error al enviar el correo: {e}")
 
+
 def send_alert_email(to_email: str, alert_name: str, news_data):
     """
     Envía el correo de alerta de noticias siguiendo el formato estricto del Sprint 3.2.
@@ -133,8 +134,8 @@ def send_alert_email(to_email: str, alert_name: str, news_data):
     for n in news_data:
         html_items += f"""
         <div style="border-bottom: 1px solid #ddd; padding: 10px 0;">
-            <p><strong>{n.get('title', 'Sin título')}</strong></p>
-            <p><small>{n.get('published', 'N/A')} | <a href="{n.get('link')}">Ver noticia</a></small></p>
+            <p><strong>{n.get("title", "Sin título")}</strong></p>
+            <p><small>{n.get("published", "N/A")} | <a href="{n.get("link")}">Ver noticia</a></small></p>
         </div>
         """
     html = f"""
@@ -168,6 +169,7 @@ def send_alert_email(to_email: str, alert_name: str, news_data):
 
     except Exception as e:
         print(f"Error al enviar el correo de alerta: {e}")
+
 
 # --- DEPENDENCIAS DE AUTENTICACIÓN ---
 

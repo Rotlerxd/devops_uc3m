@@ -1,4 +1,5 @@
 """API backend de NewsRadar con modelos, endpoints y motor RSS en memoria."""
+
 from __future__ import annotations
 
 import asyncio
@@ -161,7 +162,7 @@ class Category(CategoryBase):
 class NotificationBase(BaseModel):
     timestamp: datetime
     metrics: list[Metric] = Field(default_factory=list)
-    iptc_category: str # Agregamos el campo de categoría IPTC para poder mostrarlo en las notificaciones sin necesidad de hacer join con la categoría original. Se llenará al crear la notificación a partir de la alerta y su categoría asociada.
+    iptc_category: str  # Agregamos el campo de categoría IPTC para poder mostrarlo en las notificaciones sin necesidad de hacer join con la categoría original. Se llenará al crear la notificación a partir de la alerta y su categoría asociada.
 
 
 class NotificationCreate(NotificationBase):
@@ -335,7 +336,7 @@ def sanitize_user(user: UserInDB) -> User:
         last_name=user.last_name,
         organization=user.organization,
         role_ids=user.role_ids,
-        is_verified=user.is_verified, # Este campo se incluye para que el cliente sepa si el usuario está verificado o no
+        is_verified=user.is_verified,  # Este campo se incluye para que el cliente sepa si el usuario está verificado o no
     )
 
 
@@ -506,7 +507,7 @@ def verify_email(token: str):
     users_store[user.id] = usuario_actualizado
     print(f"[VERIFY] Usuario verificado exitosamente: {email}")
     user = users_store.get(2)
-    #print(f"[VERIFY] Usuario actualizado en store: {user.email}, is_verified={user.is_verified}")
+    # print(f"[VERIFY] Usuario actualizado en store: {user.email}, is_verified={user.is_verified}")
 
     return {"msg": "Cuenta verificada con éxito. Ya puedes iniciar sesión."}
 
@@ -663,15 +664,11 @@ def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permisos para crear alertas para otro usuario."
         )
-    nombres_roles = [
-        roles_store[rol_id].name.lower()
-        for rol_id in current_user.role_ids
-        if rol_id in roles_store
-    ]
+    nombres_roles = [roles_store[rol_id].name.lower() for rol_id in current_user.role_ids if rol_id in roles_store]
     if "user" in nombres_roles and "admin" not in nombres_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Los lectores no tienen permisos para crear ni gestionar alertas."
+            detail="Los lectores no tienen permisos para crear ni gestionar alertas.",
         )
     # Validar regla: Límite máximo de 20 alertas por usuario
     user_alerts_count = sum(1 for a in alerts_store.values() if a.user_id == user_id)
@@ -698,15 +695,11 @@ def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB
 )
 def get_user_alert(user_id: int, alert_id: int, current_user: UserInDB = Depends(get_current_user)) -> Alert:
     """Obtiene una alerta concreta de un usuario."""
-    nombres_roles = [
-        roles_store[rol_id].name.lower()
-        for rol_id in current_user.role_ids
-        if rol_id in roles_store
-    ]
+    nombres_roles = [roles_store[rol_id].name.lower() for rol_id in current_user.role_ids if rol_id in roles_store]
     if "user" in nombres_roles and "admin" not in nombres_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Los lectores no tienen permisos para crear ni gestionar alertas."
+            detail="Los lectores no tienen permisos para crear ni gestionar alertas.",
         )
     return ensure_alert_for_user(user_id, alert_id)
 
@@ -723,16 +716,12 @@ def update_user_alert(
     current_user: UserInDB = Depends(get_current_user),
 ) -> Alert:
     """Actualiza una alerta de usuario."""
-    nombres_roles = [
-        roles_store[rol_id].name.lower()
-        for rol_id in current_user.role_ids
-        if rol_id in roles_store
-    ]
+    nombres_roles = [roles_store[rol_id].name.lower() for rol_id in current_user.role_ids if rol_id in roles_store]
 
     if "user" in nombres_roles and "admin" not in nombres_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Los lectores no tienen permisos para crear ni gestionar alertas."
+            detail="Los lectores no tienen permisos para crear ni gestionar alertas.",
         )
     alert = ensure_alert_for_user(user_id, alert_id)
     updated = alert.model_copy(update=payload.model_dump(exclude_unset=True))
@@ -750,15 +739,11 @@ def update_user_alert(
 def delete_user_alert(user_id: int, alert_id: int, current_user: UserInDB = Depends(get_current_user)) -> None:
     """Elimina una alerta y sus notificaciones relacionadas."""
     ensure_alert_for_user(user_id, alert_id)
-    nombres_roles = [
-        roles_store[rol_id].name.lower()
-        for rol_id in current_user.role_ids
-        if rol_id in roles_store
-    ]
+    nombres_roles = [roles_store[rol_id].name.lower() for rol_id in current_user.role_ids if rol_id in roles_store]
     if "user" in nombres_roles and "admin" not in nombres_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Los lectores no tienen permisos para crear ni gestionar alertas."
+            detail="Los lectores no tienen permisos para crear ni gestionar alertas.",
         )
     notification_ids = [n.id for n in notifications_store.values() if n.alert_id == alert_id]
     for notification_id in notification_ids:
@@ -1215,7 +1200,7 @@ async def rss_fetcher_engine():
                         # Si prefieres el código (ej: "TECH"), cambia cat.get('label') por cat.get('code')
                         try:
                             # Asumiendo que es un diccionario
-                            #categoria_clasificada = ", ".join([cat.get('label', '') for cat in alert.categories])
+                            # categoria_clasificada = ", ".join([cat.get('label', '') for cat in alert.categories])
                             if alert.categories:
                                 categoria_clasificada = ", ".join([cat.label for cat in alert.categories])
                             else:
@@ -1227,7 +1212,7 @@ async def rss_fetcher_engine():
                         categoria_clasificada = "General"
 
                     for noticia in noticias_encontradas:
-                        datos_rss = noticia["_source"] # Aquí dentro están el título, resumen, etc.
+                        datos_rss = noticia["_source"]  # Aquí dentro están el título, resumen, etc.
                         lista_noticias.append(datos_rss)
                         notif_id = next_id("notifications")
 
@@ -1244,11 +1229,7 @@ async def rss_fetcher_engine():
                     # --- AQUÍ IRÁ LA LLAMADA PARA ENVIAR EL EMAIL ---
                     usuario = users_store.get(alert.user_id)
                     if usuario and usuario.email:
-                        send_alert_email(
-                            to_email=usuario.email,
-                            alert_name=alert.name,
-                            news_data=lista_noticias
-                        )
+                        send_alert_email(to_email=usuario.email, alert_name=alert.name, news_data=lista_noticias)
             except Exception as e:
                 print(f"[RADAR] Error consultando alerta '{alert.name}': {e}")
         print("[MOTOR RSS] Ciclo completado. Durmiendo 15 minutos...")
