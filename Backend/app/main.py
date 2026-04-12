@@ -1,11 +1,13 @@
 """API backend de NewsRadar con modelos, endpoints y motor RSS en memoria."""
 from __future__ import annotations
+
 import asyncio
 import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
+
 import feedparser
 from elasticsearch import Elasticsearch
 from fastapi import Depends, FastAPI, HTTPException, Response, status
@@ -13,10 +15,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field, HttpUrl
+
 from app.core.security import (
     create_verification_token,
+    send_alert_email,
     send_verification_email,
-    send_alert_email,)
+)
 
 ELASTICSEARCH_URL = "http://localhost:9200"
 
