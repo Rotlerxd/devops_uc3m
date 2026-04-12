@@ -23,6 +23,13 @@ MAILTRAP_PORT = int(os.getenv("MAIL_PORT", 2525))
 MAILTRAP_USER = os.getenv("MAIL_USERNAME", "f7aab98648814d")
 MAILTRAP_PASS = os.getenv("MAIL_PASSWORD", "b34ae07bf8e257")
 
+GMAIL_HOST = os.getenv("GMAIL_HOST", "smtp.gmail.com")
+GMAIL_PORT = int(os.getenv("GMAIL_PORT", 587))
+GMAIL_USER = os.getenv("GMAIL_USER", "newsradar.app.noreply@gmail.com")
+GMAIL_PASS = os.getenv("GMAIL_PASS", "bhpjehrlnapjpzgj")
+
+# bhpj ehrl napj pzgj
+
 # --- Configuración de bcrypt ---
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -71,7 +78,7 @@ def send_verification_email(to_email: str, token: str):
 
     msg = MIMEMultipart()
     msg["Subject"] = "NEWSRADAR - Verifica tu cuenta"
-    msg["From"] = "noreply@newsradar.com"
+    msg["From"] = "newsradar.app.noreply@gmail.com"
     msg["To"] = to_email
 
     verification_link = f"http://localhost:8000/api/v1/auth/verify?token={token}"
@@ -93,16 +100,75 @@ def send_verification_email(to_email: str, token: str):
     """
     msg.attach(MIMEText(html, "html"))
     try:
-        print(f"DEBUG - Host: {MAILTRAP_HOST}")
-        print(f"DEBUG - User: {MAILTRAP_USER}")
-        with smtplib.SMTP(MAILTRAP_HOST, MAILTRAP_PORT) as server:
+        # with smtplib.SMTP(MAILTRAP_HOST, MAILTRAP_PORT) as server:
+        #     server.ehlo()
+        #     server.starttls()
+        #     server.login(MAILTRAP_USER, MAILTRAP_PASS)
+        #     server.send_message(msg)
+        #     print(f"Correo de verificación enviado a Mailtrap{to_email}")
+        with smtplib.SMTP(GMAIL_HOST, GMAIL_PORT) as server:
             server.ehlo()
             server.starttls()
-            server.login(MAILTRAP_USER, MAILTRAP_PASS)
+            server.login(GMAIL_USER, GMAIL_PASS)
             server.send_message(msg)
             print(f"Correo de verificación enviado a {to_email}")
     except Exception as e:
         print(f"Error al enviar el correo: {e}")
+
+
+def send_alert_email(to_email: str, alert_name: str, news_data):
+    """
+    Envía el correo de alerta de noticias siguiendo el formato estricto del Sprint 3.2.
+    """
+    load_dotenv()
+
+    msg = MIMEMultipart()
+    # 1. ASUNTO ESTRICTO: “Actualización de <alerta> en <día/hora>”
+    now_str = datetime.now().strftime("%d/%m/%Y %H:%M")
+    msg["Subject"] = f"Actualización de {alert_name} en {now_str}"
+    msg["From"] = os.getenv("GMAIL_USER", "newsradar.app.noreply@gmail.com")
+    msg["To"] = to_email
+
+    # 2. CUERPO HTML (Siguiendo tu estilo pero con los datos requeridos)
+    html_items = ""
+    for n in news_data:
+        html_items += f"""
+        <div style="border-bottom: 1px solid #ddd; padding: 10px 0;">
+            <p><strong>{n.get("title", "Sin título")}</strong></p>
+            <p><small>{n.get("published", "N/A")} | <a href="{n.get("link")}">Ver noticia</a></small></p>
+        </div>
+        """
+    html = f"""
+    <html>
+        <body>
+            <h2>Actualización para tu alerta: {alert_name}</h2>
+            <p>Hemos encontrado {len(news_data)} noticias nuevas:</p>
+            {html_items}
+        </body>
+    </html>
+    """
+
+    msg.attach(MIMEText(html, "html"))
+
+    try:
+        # Envío a Mailtrap (Desarrollo)
+        # with smtplib.SMTP(MAILTRAP_HOST, MAILTRAP_PORT) as server:
+        #     server.ehlo()
+        #     server.starttls()
+        #     server.login(MAILTRAP_USER, MAILTRAP_PASS)
+        #     server.send_message(msg)
+        #     print(f"[MAILTRAP] Alerta '{alert_name}' enviada a {to_email}")
+
+        # Envío a Gmail (Producción)
+        with smtplib.SMTP(GMAIL_HOST, GMAIL_PORT) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(GMAIL_USER, GMAIL_PASS)
+            server.send_message(msg)
+            print(f"[GMAIL] Alerta '{alert_name}' enviada a {to_email}")
+
+    except Exception as e:
+        print(f"Error al enviar el correo de alerta: {e}")
 
 
 # --- DEPENDENCIAS DE AUTENTICACIÓN ---

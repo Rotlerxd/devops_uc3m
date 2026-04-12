@@ -19,6 +19,7 @@ from pydantic import BaseModel, EmailStr, Field, HttpUrl
 
 from app.core.security import (
     create_verification_token,
+    send_alert_email,
     send_verification_email,
 )
 
@@ -51,10 +52,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], 
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
-    allow_methods=["*"], 
-    allow_headers=["*"], 
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 API_PREFIX = "/api/v1"
@@ -161,6 +162,7 @@ class Category(CategoryBase):
 class NotificationBase(BaseModel):
     timestamp: datetime
     metrics: list[Metric] = Field(default_factory=list)
+    iptc_category: str  # Agregamos el campo de categoría IPTC para poder mostrarlo en las notificaciones sin necesidad de hacer join con la categoría original. Se llenará al crear la notificación a partir de la alerta y su categoría asociada.
 
 
 class NotificationCreate(NotificationBase):
@@ -216,6 +218,7 @@ class RSSChannel(RSSChannelBase):
 
 class StatsBase(BaseModel):
     metrics: list[Metric] = Field(default_factory=list)
+    total_news: int
 
 
 class StatsCreate(StatsBase):
@@ -333,6 +336,7 @@ def sanitize_user(user: UserInDB) -> User:
         last_name=user.last_name,
         organization=user.organization,
         role_ids=user.role_ids,
+        is_verified=user.is_verified,  # Este campo se incluye para que el cliente sepa si el usuario está verificado o no
     )
 
 
@@ -480,7 +484,9 @@ def verify_email(token: str):
         email: str = payload.get("sub")
         if email is None:
             raise credentials_exception from None
-    except JWTError:
+        print(f"[VERIFY] Token decodificado, email: {email}")
+    except JWTError as e:
+        print(f"[VERIFY] Error decodificando token: {e}")
         raise credentials_exception from None
 
     # Buscamos al usuario en la BD
@@ -491,17 +497,17 @@ def verify_email(token: str):
             break
 
     if user is None:
+        print(f"[VERIFY] Usuario no encontrado para email: {email}")
         raise credentials_exception from None
 
     if user.is_verified:
+        print(f"[VERIFY] Usuario ya verificado: {email}")
         return {"msg": "El usuario ya estaba verificado"}
-
-    # Actualizamos el estado a verificado
-    user.is_verified = True
-    for u in users_store.values():
-        if u.email == email:
-            u.is_verified = True
-            break
+    usuario_actualizado = user.model_copy(update={"is_verified": True})
+    users_store[user.id] = usuario_actualizado
+    print(f"[VERIFY] Usuario verificado exitosamente: {email}")
+    user = users_store.get(2)
+    # print(f"[VERIFY] Usuario actualizado en store: {user.email}, is_verified={user.is_verified}")
 
     return {"msg": "Cuenta verificada con éxito. Ya puedes iniciar sesión."}
 
@@ -658,7 +664,12 @@ def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permisos para crear alertas para otro usuario."
         )
-
+    nombres_roles = [roles_store[rol_id].name.lower() for rol_id in current_user.role_ids if rol_id in roles_store]
+    if "user" in nombres_roles and "admin" not in nombres_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Los lectores no tienen permisos para crear ni gestionar alertas.",
+        )
     # Validar regla: Límite máximo de 20 alertas por usuario
     user_alerts_count = sum(1 for a in alerts_store.values() if a.user_id == user_id)
     if user_alerts_count >= 20:
@@ -682,8 +693,14 @@ def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB
     response_model=Alert,
     tags=["alerts"],
 )
-def get_user_alert(user_id: int, alert_id: int, _: UserInDB = Depends(get_current_user)) -> Alert:
+def get_user_alert(user_id: int, alert_id: int, current_user: UserInDB = Depends(get_current_user)) -> Alert:
     """Obtiene una alerta concreta de un usuario."""
+    nombres_roles = [roles_store[rol_id].name.lower() for rol_id in current_user.role_ids if rol_id in roles_store]
+    if "user" in nombres_roles and "admin" not in nombres_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Los lectores no tienen permisos para crear ni gestionar alertas.",
+        )
     return ensure_alert_for_user(user_id, alert_id)
 
 
@@ -696,9 +713,16 @@ def update_user_alert(
     user_id: int,
     alert_id: int,
     payload: AlertUpdate,
-    _: UserInDB = Depends(get_current_user),
+    current_user: UserInDB = Depends(get_current_user),
 ) -> Alert:
     """Actualiza una alerta de usuario."""
+    nombres_roles = [roles_store[rol_id].name.lower() for rol_id in current_user.role_ids if rol_id in roles_store]
+
+    if "user" in nombres_roles and "admin" not in nombres_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Los lectores no tienen permisos para crear ni gestionar alertas.",
+        )
     alert = ensure_alert_for_user(user_id, alert_id)
     updated = alert.model_copy(update=payload.model_dump(exclude_unset=True))
     alerts_store[alert_id] = updated
@@ -712,9 +736,15 @@ def update_user_alert(
     response_class=Response,
     tags=["alerts"],
 )
-def delete_user_alert(user_id: int, alert_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+def delete_user_alert(user_id: int, alert_id: int, current_user: UserInDB = Depends(get_current_user)) -> None:
     """Elimina una alerta y sus notificaciones relacionadas."""
     ensure_alert_for_user(user_id, alert_id)
+    nombres_roles = [roles_store[rol_id].name.lower() for rol_id in current_user.role_ids if rol_id in roles_store]
+    if "user" in nombres_roles and "admin" not in nombres_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Los lectores no tienen permisos para crear ni gestionar alertas.",
+        )
     notification_ids = [n.id for n in notifications_store.values() if n.alert_id == alert_id]
     for notification_id in notification_ids:
         notifications_store.pop(notification_id, None)
@@ -729,7 +759,7 @@ def delete_user_alert(user_id: int, alert_id: int, _: UserInDB = Depends(get_cur
 def list_alert_notifications(
     user_id: int,
     alert_id: int,
-    _: UserInDB = Depends(get_current_user),
+    current_user: UserInDB = Depends(get_current_user),
 ) -> list[Notification]:
     """Lista notificaciones de una alerta."""
     ensure_alert_for_user(user_id, alert_id)
@@ -1159,24 +1189,49 @@ async def rss_fetcher_engine():
 
                 # Elasticsearch devuelve el total de coincidencias en esta ruta
                 total_hits = resultados["hits"]["total"]["value"]
+                noticias_encontradas = resultados["hits"]["hits"]
 
                 # 3. Si hay coincidencias, creamos la notificación
                 if total_hits > 0:
                     print(f"[ALERTA DISPARADA] '{alert.name}' (User {alert.user_id}): {total_hits} coincidencias.")
+                    lista_noticias = []
+                    if alert.categories:
+                        # Si son diccionarios, sacamos el 'label' (ej: "Tecnología")
+                        # Si prefieres el código (ej: "TECH"), cambia cat.get('label') por cat.get('code')
+                        try:
+                            # Asumiendo que es un diccionario
+                            # categoria_clasificada = ", ".join([cat.get('label', '') for cat in alert.categories])
+                            if alert.categories:
+                                categoria_clasificada = ", ".join([cat.label for cat in alert.categories])
+                            else:
+                                categoria_clasificada = "General"
+                        except AttributeError:
+                            # Por si resulta ser un objeto Pydantic y no un diccionario
+                            categoria_clasificada = ", ".join([cat.label for cat in alert.categories])
+                    else:
+                        categoria_clasificada = "General"
 
-                    notif_id = next_id("notifications")
-                    nueva_notificacion = Notification(
-                        id=notif_id,
-                        alert_id=alert_id,
-                        timestamp=datetime.now(UTC),
-                        metrics=[Metric(name="noticias_encontradas", value=float(total_hits))],
-                    )
-                    notifications_store[notif_id] = nueva_notificacion
-                    stats_store[1].total_notifications += 1
+                    for noticia in noticias_encontradas:
+                        datos_rss = noticia["_source"]  # Aquí dentro están el título, resumen, etc.
+                        lista_noticias.append(datos_rss)
+                        notif_id = next_id("notifications")
 
+                        # Creamos la notificación en el buzón
+                        nueva_notificacion = Notification(
+                            id=notif_id,
+                            alert_id=alert_id,
+                            timestamp=datetime.now(UTC),
+                            metrics=[Metric(name="noticias_encontradas", value=float(total_hits))],
+                            iptc_category=categoria_clasificada,
+                        )
+                        notifications_store[notif_id] = nueva_notificacion
+                        stats_store[1].total_notifications += 1
+                    # --- AQUÍ IRÁ LA LLAMADA PARA ENVIAR EL EMAIL ---
+                    usuario = users_store.get(alert.user_id)
+                    if usuario and usuario.email:
+                        send_alert_email(to_email=usuario.email, alert_name=alert.name, news_data=lista_noticias)
             except Exception as e:
                 print(f"[RADAR] Error consultando alerta '{alert.name}': {e}")
-
         print("[MOTOR RSS] Ciclo completado. Durmiendo 15 minutos...")
         # Esperamos 15 minutos (900 segundos) hasta la próxima batida
         # await asyncio.sleep(900)
