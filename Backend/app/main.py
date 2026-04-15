@@ -309,46 +309,73 @@ def ensure_role_ids_exist(role_ids: list[int], db: Session) -> None:
             detail=f"Roles no encontrados: {missing}",
         )
 
-def ensure_user_exists(user_id: int) -> None:
-    """Lanza 404 si el usuario no existe."""
-    if user_id not in users_store:
+# def ensure_user_exists(user_id: int) -> None:
+#     """Lanza 404 si el usuario no existe."""
+#     if user_id not in users_store:
+#         raise HTTPException(status_code=404, detail="Usuario no encontrado")
+# 
+# 
+# def ensure_alert_for_user(user_id: int, alert_id: int) -> Alert:
+#     """Obtiene una alerta de un usuario o lanza 404 si no corresponde."""
+#     alert = alerts_store.get(alert_id)
+#     if not alert or alert.user_id != user_id:
+#         raise HTTPException(status_code=404, detail="Alerta no encontrada para el usuario")
+#     return alert
+
+def ensure_user_exists(user_id: int, db: Session) -> None:
+    """Lanza 404 si el usuario no existe en la base de datos."""
+    if not db.query(db_models.User).filter(db_models.User.id == user_id).first():
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-
-def ensure_alert_for_user(user_id: int, alert_id: int) -> Alert:
+def ensure_alert_for_user(user_id: int, alert_id: int, db: Session):
     """Obtiene una alerta de un usuario o lanza 404 si no corresponde."""
-    alert = alerts_store.get(alert_id)
-    if not alert or alert.user_id != user_id:
+    # Opcional: puedes dejar la llamada a ensure_user_exists si quieres doble check, 
+    # pero con la consulta de abajo es suficiente para proteger el endpoint.
+    db_alert = db.query(db_models.Alert).filter(
+        db_models.Alert.id == alert_id, 
+        db_models.Alert.user_id == user_id
+    ).first()
+    
+    if not db_alert:
         raise HTTPException(status_code=404, detail="Alerta no encontrada para el usuario")
-    return alert
+    
+    return db_alert
 
 
-def ensure_notification_for_alert(alert_id: int, notification_id: int) -> Notification:
-    """Obtiene una notificación de una alerta o lanza 404."""
-    notification = notifications_store.get(notification_id)
-    if not notification or notification.alert_id != alert_id:
+def ensure_notification_for_alert(alert_id: int, notification_id: int, db: Session):
+    """Obtiene una notificación de una alerta o lanza 404 buscando en PostgreSQL."""
+    db_notification = db.query(db_models.Notification).filter(
+        db_models.Notification.id == notification_id,
+        db_models.Notification.alert_id == alert_id
+    ).first()
+    
+    if not db_notification:
         raise HTTPException(status_code=404, detail="Notificación no encontrada para la alerta")
-    return notification
+        
+    return db_notification
 
 
 def ensure_information_source_exists(source_id: int) -> None:
     """Lanza 404 si la fuente de información no existe."""
-    if source_id not in information_sources_store:
+    if not db.query(db_models.InformationSource).filter(db_models.InformationSource.id == source_id).first():
         raise HTTPException(status_code=404, detail="Fuente de información no encontrada")
 
 
 def ensure_category_exists(category_id: int) -> None:
     """Lanza 404 si la categoría no existe."""
-    if category_id not in categories_store:
+    if not db.query(db_models.Category).filter(db_models.Category.id == category_id).first():
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
 
 
 def ensure_rss_for_source(source_id: int, channel_id: int) -> RSSChannel:
     """Obtiene un canal RSS de una fuente concreta o lanza 404."""
-    channel = rss_channels_store.get(channel_id)
-    if not channel or channel.information_source_id != source_id:
+    db_channel = db.query(db_models.RSSChannel).filter(
+        db_models.RSSChannel.id == channel_id,
+        db_models.RSSChannel.information_source_id == source_id
+    ).first()
+    if not db_channel:
         raise HTTPException(status_code=404, detail="Canal RSS no encontrado para la fuente")
-    return channel
+    return db_channel
 
 
 # ef sanitize_user(user: UserInDB) -> User:
@@ -378,20 +405,24 @@ def sanitize_user(user_db: models.User) -> User:
     )
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: HTTPAuthorizationCredentials = Depends(security),db: Session = Depends(get_db)
 ) -> UserInDB:
-    """Autentica el token bearer y devuelve el usuario asociado."""
+    """Autentica el token bearer y devuelve el usuario de PostgreSQL asociado."""
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Token inválido o ausente")
 
+    # 1. Validamos el token contra el diccionario en memoria
     user_id = active_tokens.get(credentials.credentials)
     if not user_id:
         raise HTTPException(status_code=401, detail="Token inválido o expirado")
 
-    user = users_store.get(user_id)
+    # 2. Extraemos el usuario real de la base de datos
+    user = db.query(db_models.User).filter(db_models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="Usuario inválido")
 
+    # Retornamos el objeto ORM. Esto es ideal porque en los endpoints 
+    # podrás acceder fácilmente a sus relaciones, ej: current_user.roles
     return user
 
 
@@ -534,7 +565,7 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
 
 
 @app.get(f"{API_PREFIX}/auth/verify", tags=["auth"])
-def verify_email(token: str):
+def verify_email(token: str, db: Session = Depends(get_db)):
     """Verifica un usuario validando el token JWT de verificación."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -551,74 +582,105 @@ def verify_email(token: str):
         print(f"[VERIFY] Error decodificando token: {e}")
         raise credentials_exception from None
 
-    # Buscamos al usuario en la BD
-    user = None
-    for u in users_store.values():
-        if u.email == email:
-            user = u
-            break
+    # 1. Buscamos al usuario en la base de datos en lugar de iterar sobre el diccionario
+    db_user = db.query(db_models.User).filter(db_models.User.email == email).first()
 
-    if user is None:
+    if db_user is None:
         print(f"[VERIFY] Usuario no encontrado para email: {email}")
         raise credentials_exception from None
 
-    if user.is_verified:
+    # 2. Comprobamos si ya estaba verificado
+    if db_user.is_verified:
         print(f"[VERIFY] Usuario ya verificado: {email}")
+        # Respetamos la estructura de retorno exacta
         return {"msg": "El usuario ya estaba verificado"}
-    usuario_actualizado = user.model_copy(update={"is_verified": True})
-    users_store[user.id] = usuario_actualizado
+    
+    # 3. Actualizamos el estado y guardamos en PostgreSQL
+    db_user.is_verified = True
+    db.commit()
+    
+    # Opcional pero recomendado para asegurarnos de que el objeto local tiene los datos actualizados
+    db.refresh(db_user) 
+    
     print(f"[VERIFY] Usuario verificado exitosamente: {email}")
-    user = users_store.get(2)
-    # print(f"[VERIFY] Usuario actualizado en store: {user.email}, is_verified={user.is_verified}")
 
     return {"msg": "Cuenta verificada con éxito. Ya puedes iniciar sesión."}
 
 # CRUD USERS
 
 @app.get(f"{API_PREFIX}/users", response_model=list[User], tags=["users"])
-def list_users(_: UserInDB = Depends(get_current_user)) -> list[User]:
+def list_users(_: UserInDB = Depends(get_current_user),db: Session = Depends(get_db)) -> list[User]:
     """Lista los usuarios registrados."""
-    return [sanitize_user(user) for user in users_store.values()]
+    users = db.query(db_models.User).all()
+    return [sanitize_user(user) for user in users]
 
 
 @app.post(f"{API_PREFIX}/users", response_model=User, status_code=201, tags=["users"])
-def create_user(payload: UserCreate, _: UserInDB = Depends(get_current_user)) -> User:
+def create_user(payload: UserCreate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
     """Crea un usuario desde la API protegida."""
-    if any(user.email == payload.email for user in users_store.values()):
+    # 1. Comprobar email duplicado
+    if db.query(db_models.User).filter(db_models.User.email == payload.email).first():
         raise HTTPException(status_code=409, detail="El email ya está registrado")
 
-    ensure_role_ids_exist(payload.role_ids)
-    user_id = next_id("users")
-    user_db = UserInDB(id=user_id, **payload.model_dump())
-    users_store[user_id] = user_db
-    return sanitize_user(user_db)
+    # 2. Validar y obtener roles
+    ensure_role_ids_exist(payload.role_ids, db)
+    db_roles = db.query(db_models.Role).filter(db_models.Role.id.in_(payload.role_ids)).all()
+
+    # 3. Crear el usuario (excluimos role_ids del dump para meter los objetos ORM)
+    user_data = payload.model_dump(exclude={"role_ids"})
+    new_user = db_models.User(**user_data, roles=db_roles)
+    
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    return sanitize_user(new_user)
 
 
 @app.get(f"{API_PREFIX}/users/{{user_id}}", response_model=User, tags=["users"])
-def get_user(user_id: int, _: UserInDB = Depends(get_current_user)) -> User:
+def get_user(user_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
     """Obtiene un usuario por su identificador."""
-    user = users_store.get(user_id)
-    if not user:
+    db_user = db.query(db_models.User).filter(db_models.User.id == user_id).first()
+    
+    if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    return sanitize_user(user)
+        
+    return sanitize_user(db_user)
 
 
 @app.put(f"{API_PREFIX}/users/{{user_id}}", response_model=User, tags=["users"])
-def update_user(user_id: int, payload: UserUpdate, _: UserInDB = Depends(get_current_user)) -> User:
+def update_user(user_id: int, payload: UserUpdate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
     """Actualiza los campos permitidos de un usuario."""
-    user = users_store.get(user_id)
-    if not user:
+    db_user = db.query(db_models.User).filter(db_models.User.id == user_id).first()
+    if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     data = payload.model_dump(exclude_unset=True)
-    if "email" in data and any(u.email == data["email"] and u.id != user_id for u in users_store.values()):
-        raise HTTPException(status_code=409, detail="El email ya está registrado")
-    if "role_ids" in data:
-        ensure_role_ids_exist(data["role_ids"])
 
-    updated = user.model_copy(update=data)
-    users_store[user_id] = updated
-    return sanitize_user(updated)
+    # Validar email único si se está actualizando
+    if "email" in data:
+        existing_user = db.query(db_models.User).filter(
+            db_models.User.email == data["email"], 
+            db_models.User.id != user_id
+        ).first()
+        if existing_user:
+            raise HTTPException(status_code=409, detail="El email ya está registrado")
+
+    # Validar y actualizar roles si vienen en el payload
+    if "role_ids" in data:
+        ensure_role_ids_exist(data["role_ids"], db)
+        db_roles = db.query(db_models.Role).filter(db_models.Role.id.in_(data["role_ids"])).all()
+        db_user.roles = db_roles
+        del data["role_ids"] # Lo quitamos del dicc para no pisarlo en el bucle de abajo
+
+    # Actualizar dinámicamente el resto de campos permitidos
+    for key, value in data.items():
+        setattr(db_user, key, value)
+
+    db.commit()
+    db.refresh(db_user)
+    
+    return sanitize_user(db_user)
 
 
 @app.delete(
@@ -628,56 +690,63 @@ def update_user(user_id: int, payload: UserUpdate, _: UserInDB = Depends(get_cur
     response_class=Response,
     tags=["users"],
 )
-def delete_user(user_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+def delete_user(user_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
     """Elimina un usuario y sus alertas/notificaciones asociadas."""
-    if user_id not in users_store:
+    db_user = db.query(db_models.User).filter(db_models.User.id == user_id).first()
+    if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    alert_ids = [alert.id for alert in alerts_store.values() if alert.user_id == user_id]
-    for alert_id in alert_ids:
-        notification_ids = [n.id for n in notifications_store.values() if n.alert_id == alert_id]
-        for notification_id in notification_ids:
-            notifications_store.pop(notification_id, None)
-        alerts_store.pop(alert_id, None)
-
-    users_store.pop(user_id, None)
+    # En bases de datos relacionales, al borrar el usuario, el ON DELETE CASCADE
+    # configurado en los modelos borra automáticamente sus alertas y notificaciones.
+    # Nos ahorramos los bucles `for` que tenías en memoria.
+    db.delete(db_user)
+    db.commit()
 
 
 #CRUD ROLES 
 
 @app.get(f"{API_PREFIX}/roles", response_model=list[Role], tags=["roles"])
-def list_roles(_: UserInDB = Depends(get_current_user)) -> list[Role]:
+def list_roles(_: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Role]:
     """Lista todos los roles."""
-    return list(roles_store.values())
+    return db.query(db_models.Role).all()
 
 
 @app.post(f"{API_PREFIX}/roles", response_model=Role, status_code=201, tags=["roles"])
-def create_role(payload: RoleCreate, _: UserInDB = Depends(get_current_user)) -> Role:
+def create_role(payload: RoleCreate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Role:
     """Crea un rol nuevo."""
-    role_id = next_id("roles")
-    role = Role(id=role_id, **payload.model_dump())
-    roles_store[role_id] = role
-    return role
+    db_role = db_models.Role(**payload.model_dump())
+    db.add(db_role)
+    db.commit()
+    db.refresh(db_role)
+    return db_role
 
 
 @app.get(f"{API_PREFIX}/roles/{{role_id}}", response_model=Role, tags=["roles"])
-def get_role(role_id: int, _: UserInDB = Depends(get_current_user)) -> Role:
+def get_role(role_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Role:
     """Obtiene un rol por identificador."""
-    role = roles_store.get(role_id)
-    if not role:
+    db_role = db.query(db_models.Role).filter(db_models.Role.id == role_id).first()
+    
+    if not db_role:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
-    return role
+        
+    return db_role
 
 
 @app.put(f"{API_PREFIX}/roles/{{role_id}}", response_model=Role, tags=["roles"])
-def update_role(role_id: int, payload: RoleUpdate, _: UserInDB = Depends(get_current_user)) -> Role:
+def update_role(role_id: int, payload: RoleUpdate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Role:
     """Actualiza un rol existente."""
-    role = roles_store.get(role_id)
-    if not role:
+    db_role = db.query(db_models.Role).filter(db_models.Role.id == role_id).first()
+    
+    if not db_role:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
-    updated = role.model_copy(update=payload.model_dump(exclude_unset=True))
-    roles_store[role_id] = updated
-    return updated
+        
+    data = payload.model_dump(exclude_unset=True)
+    for key, value in data.items():
+        setattr(db_role, key, value)
+        
+    db.commit()
+    db.refresh(db_role)
+    return db_role
 
 
 @app.delete(
@@ -687,19 +756,25 @@ def update_role(role_id: int, payload: RoleUpdate, _: UserInDB = Depends(get_cur
     response_class=Response,
     tags=["roles"],
 )
-def delete_role(role_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+def delete_role(role_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
     """Elimina un rol si no está asignado a usuarios."""
-    if role_id not in roles_store:
+    db_role = db.query(db_models.Role).filter(db_models.Role.id == role_id).first()
+    
+    if not db_role:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
 
-    for user in users_store.values():
-        if role_id in user.role_ids:
-            raise HTTPException(
-                status_code=409,
-                detail="No se puede eliminar un rol asignado a usuarios",
-            )
+    # [Optimización SQL] Comprobamos si el rol está asignado usando .any() en la relación.
+    # Esto le dice a Postgres: "¿Existe algún User tal que en su lista de roles contenga este role_id?"
+    user_with_role = db.query(db_models.User).filter(db_models.User.roles.any(id=role_id)).first()
+    
+    if user_with_role:
+        raise HTTPException(
+            status_code=409,
+            detail="No se puede eliminar un rol asignado a usuarios",
+        )
 
-    roles_store.pop(role_id, None)
+    db.delete(db_role)
+    db.commit()
 
 #CRUD user alerts 
 
@@ -708,11 +783,13 @@ def delete_role(role_id: int, _: UserInDB = Depends(get_current_user)) -> None:
     response_model=list[Alert],
     tags=["alerts"],
 )
-def list_user_alerts(user_id: int, current_user: UserInDB = Depends(get_current_user)) -> list[Alert]:
+def list_user_alerts(user_id: int, current_user: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Alert]:
     """Lista las alertas asociadas a un usuario."""
-    ensure_user_exists(user_id)
-
-    return [alert for alert in alerts_store.values() if alert.user_id == user_id]
+    ensure_user_exists(user_id, db)
+    
+    # En SQLAlchemy podemos filtrar directamente por el user_id
+    alerts = db.query(db_models.Alert).filter(db_models.Alert.user_id == user_id).all()
+    return alerts
 
 
 @app.post(
@@ -721,23 +798,29 @@ def list_user_alerts(user_id: int, current_user: UserInDB = Depends(get_current_
     status_code=201,
     tags=["alerts"],
 )
-def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB = Depends(get_current_user)) -> Alert:
+def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Alert:
     """Crea una alerta para el usuario autenticado validando reglas de negocio."""
-    ensure_user_exists(user_id)
+    ensure_user_exists(user_id, db)
 
     # Validar que el usuario que crea la alerta es el mismo que está logueado
     if current_user.id != user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permisos para crear alertas para otro usuario."
         )
-    nombres_roles = [roles_store[rol_id].name.lower() for rol_id in current_user.role_ids if rol_id in roles_store]
-    if "user" in nombres_roles and "admin" not in nombres_roles:
+        
+    # Extraemos los nombres de los roles del current_user (ahora es un objeto SQLAlchemy)
+    nombres_roles = [rol.name.lower() for rol in current_user.roles]
+    
+    # Adaptado a los roles "lector" y "gestor" de tu BD real
+    if "lector" in nombres_roles and "gestor" not in nombres_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Los lectores no tienen permisos para crear ni gestionar alertas.",
         )
+        
     # Validar regla: Límite máximo de 20 alertas por usuario
-    user_alerts_count = sum(1 for a in alerts_store.values() if a.user_id == user_id)
+    # En SQL usamos .count() en lugar de traer todos los registros a memoria para contarlos
+    user_alerts_count = db.query(db_models.Alert).filter(db_models.Alert.user_id == user_id).count()
     if user_alerts_count >= 20:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Límite máximo de 20 alertas alcanzado.")
 
@@ -748,10 +831,13 @@ def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB
             detail="La alerta debe tener entre 3 y 10 descriptores (sinónimos).",
         )
 
-    alert_id = next_id("alerts")
-    alert = Alert(id=alert_id, user_id=user_id, **payload.model_dump())
-    alerts_store[alert_id] = alert
-    return alert
+    # Crear la alerta en PostgreSQL
+    db_alert = db_models.Alert(user_id=user_id, **payload.model_dump())
+    db.add(db_alert)
+    db.commit()
+    db.refresh(db_alert)
+    
+    return db_alert
 
 
 @app.get(
@@ -759,15 +845,16 @@ def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB
     response_model=Alert,
     tags=["alerts"],
 )
-def get_user_alert(user_id: int, alert_id: int, current_user: UserInDB = Depends(get_current_user)) -> Alert:
+def get_user_alert(user_id: int, alert_id: int, current_user: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Alert:
     """Obtiene una alerta concreta de un usuario."""
-    nombres_roles = [roles_store[rol_id].name.lower() for rol_id in current_user.role_ids if rol_id in roles_store]
-    if "user" in nombres_roles and "admin" not in nombres_roles:
+    nombres_roles = [rol.name.lower() for rol in current_user.roles]
+    if "lector" in nombres_roles and "gestor" not in nombres_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Los lectores no tienen permisos para crear ni gestionar alertas.",
         )
-    return ensure_alert_for_user(user_id, alert_id)
+        
+    return ensure_alert_for_user(user_id, alert_id, db)
 
 
 @app.put(
@@ -780,19 +867,33 @@ def update_user_alert(
     alert_id: int,
     payload: AlertUpdate,
     current_user: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> Alert:
     """Actualiza una alerta de usuario."""
-    nombres_roles = [roles_store[rol_id].name.lower() for rol_id in current_user.role_ids if rol_id in roles_store]
-
-    if "user" in nombres_roles and "admin" not in nombres_roles:
+    nombres_roles = [rol.name.lower() for rol in current_user.roles]
+    if "lector" in nombres_roles and "gestor" not in nombres_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Los lectores no tienen permisos para crear ni gestionar alertas.",
         )
-    alert = ensure_alert_for_user(user_id, alert_id)
-    updated = alert.model_copy(update=payload.model_dump(exclude_unset=True))
-    alerts_store[alert_id] = updated
-    return updated
+        
+    db_alert = ensure_alert_for_user(user_id, alert_id, db)
+    
+    # Validar regla: Entre 3 y 10 descriptores si se están actualizando
+    if payload.descriptors is not None:
+        if len(payload.descriptors) < 3 or len(payload.descriptors) > 10:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La alerta debe tener entre 3 y 10 descriptores (sinónimos).",
+            )
+            
+    update_data = payload.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_alert, key, value)
+        
+    db.commit()
+    db.refresh(db_alert)
+    return db_alert
 
 
 @app.delete(
@@ -802,19 +903,21 @@ def update_user_alert(
     response_class=Response,
     tags=["alerts"],
 )
-def delete_user_alert(user_id: int, alert_id: int, current_user: UserInDB = Depends(get_current_user)) -> None:
+def delete_user_alert(user_id: int, alert_id: int, current_user: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
     """Elimina una alerta y sus notificaciones relacionadas."""
-    ensure_alert_for_user(user_id, alert_id)
-    nombres_roles = [roles_store[rol_id].name.lower() for rol_id in current_user.role_ids if rol_id in roles_store]
-    if "user" in nombres_roles and "admin" not in nombres_roles:
+    db_alert = ensure_alert_for_user(user_id, alert_id, db)
+    
+    nombres_roles = [rol.name.lower() for rol in current_user.roles]
+    if "lector" in nombres_roles and "gestor" not in nombres_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Los lectores no tienen permisos para crear ni gestionar alertas.",
         )
-    notification_ids = [n.id for n in notifications_store.values() if n.alert_id == alert_id]
-    for notification_id in notification_ids:
-        notifications_store.pop(notification_id, None)
-    alerts_store.pop(alert_id, None)
+        
+    # Gracias a SQLAlchemy y el "CASCADE" de la BD, borrar la alerta aquí
+    # eliminará automáticamente todas las notificaciones asociadas.
+    db.delete(db_alert)
+    db.commit()
     
     
 #CRUD alert notifications 
@@ -828,11 +931,14 @@ def list_alert_notifications(
     user_id: int,
     alert_id: int,
     current_user: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> list[Notification]:
     """Lista notificaciones de una alerta."""
-    ensure_alert_for_user(user_id, alert_id)
-    return [item for item in notifications_store.values() if item.alert_id == alert_id]
-
+    # Verificamos que la alerta existe y es del usuario
+    ensure_alert_for_user(user_id, alert_id, db)
+    
+    # Consultamos las notificaciones en PostgreSQL
+    return db.query(db_models.Notification).filter(db_models.Notification.alert_id == alert_id).all()
 
 @app.post(
     f"{API_PREFIX}/users/{{user_id}}/alerts/{{alert_id}}/notifications",
@@ -845,13 +951,19 @@ def create_alert_notification(
     alert_id: int,
     payload: NotificationCreate,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> Notification:
     """Crea una notificación para una alerta concreta."""
-    ensure_alert_for_user(user_id, alert_id)
-    notification_id = next_id("notifications")
-    notification = Notification(id=notification_id, alert_id=alert_id, **payload.model_dump())
-    notifications_store[notification_id] = notification
-    return notification
+    ensure_alert_for_user(user_id, alert_id, db)
+    
+    # Creamos la entidad en la base de datos (Postgres genera el ID automáticamente)
+    db_notification = db_models.Notification(alert_id=alert_id, **payload.model_dump())
+    
+    db.add(db_notification)
+    db.commit()
+    db.refresh(db_notification)
+    
+    return db_notification
 
 
 @app.get(
@@ -864,11 +976,12 @@ def get_alert_notification(
     alert_id: int,
     notification_id: int,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> Notification:
     """Obtiene una notificación concreta de una alerta."""
-    ensure_alert_for_user(user_id, alert_id)
-    return ensure_notification_for_alert(alert_id, notification_id)
-
+    """Obtiene una notificación concreta de una alerta."""
+    ensure_alert_for_user(user_id, alert_id, db)
+    return ensure_notification_for_alert(alert_id, notification_id, db)
 
 @app.put(
     f"{API_PREFIX}/users/{{user_id}}/alerts/{{alert_id}}/notifications/{{notification_id}}",
@@ -881,13 +994,21 @@ def update_alert_notification(
     notification_id: int,
     payload: NotificationUpdate,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> Notification:
     """Actualiza una notificación de alerta."""
-    ensure_alert_for_user(user_id, alert_id)
-    notification = ensure_notification_for_alert(alert_id, notification_id)
-    updated = notification.model_copy(update=payload.model_dump(exclude_unset=True))
-    notifications_store[notification_id] = updated
-    return updated
+    ensure_alert_for_user(user_id, alert_id, db)
+    db_notification = ensure_notification_for_alert(alert_id, notification_id, db)
+    
+    # Actualizamos los campos que vengan en el payload
+    update_data = payload.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_notification, key, value)
+        
+    db.commit()
+    db.refresh(db_notification)
+    
+    return db_notification
 
 
 @app.delete(
@@ -902,48 +1023,50 @@ def delete_alert_notification(
     alert_id: int,
     notification_id: int,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> None:
     """Elimina una notificación de alerta."""
-    ensure_alert_for_user(user_id, alert_id)
-    ensure_notification_for_alert(alert_id, notification_id)
-    notifications_store.pop(notification_id, None)
+    ensure_alert_for_user(user_id, alert_id, db)
+    db_notification = ensure_notification_for_alert(alert_id, notification_id, db)
+    
+    db.delete(db_notification)
+    db.commit()
 
 
 #CRUD categorias 
 
 @app.get(f"{API_PREFIX}/categories", response_model=list[Category], tags=["categories"])
-def list_categories(_: UserInDB = Depends(get_current_user)) -> list[Category]:
+def list_categories(_: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Category]:
     """Lista categorías configuradas."""
-    return list(categories_store.values())
+    return db.query(db_models.Category).all()
 
 
 @app.post(f"{API_PREFIX}/categories", response_model=Category, status_code=201, tags=["categories"])
-def create_category(payload: CategoryCreate, _: UserInDB = Depends(get_current_user)) -> Category:
+def create_category(payload: CategoryCreate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Category:
     """Crea una nueva categoría."""
-    category_id = next_id("categories")
-    category = Category(id=category_id, **payload.model_dump())
-    categories_store[category_id] = category
-    return category
+    db_category = db_models.Category(**payload.model_dump())
+    db.add(db_category)
+    db.commit()
+    db.refresh(db_category)
+    return db_category
 
 
 @app.get(f"{API_PREFIX}/categories/{{category_id}}", response_model=Category, tags=["categories"])
-def get_category(category_id: int, _: UserInDB = Depends(get_current_user)) -> Category:
+def get_category(category_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Category:
     """Obtiene una categoría por identificador."""
-    category = categories_store.get(category_id)
-    if not category:
+    db_category = db.query(db_models.Category).filter(db_models.Category.id == category_id).first()
+    if not db_category:
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
-    return category
+    return db_category
 
 
 @app.put(f"{API_PREFIX}/categories/{{category_id}}", response_model=Category, tags=["categories"])
-def update_category(category_id: int, payload: CategoryUpdate, _: UserInDB = Depends(get_current_user)) -> Category:
+def update_category(category_id: int, payload: CategoryUpdate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Category:
     """Actualiza una categoría existente."""
-    category = categories_store.get(category_id)
-    if not category:
+    db_category = db.query(db_models.Category).filter(db_models.Category.id == category_id).first()
+    if not db_category:
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
-    updated = category.model_copy(update=payload.model_dump(exclude_unset=True))
-    categories_store[category_id] = updated
-    return updated
+    return db_category
 
 
 @app.delete(
@@ -953,16 +1076,21 @@ def update_category(category_id: int, payload: CategoryUpdate, _: UserInDB = Dep
     response_class=Response,
     tags=["categories"],
 )
-def delete_category(category_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+def delete_category(category_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
     """Elimina una categoría si no está asociada a canales RSS."""
-    if category_id not in categories_store:
+    db_category = db.query(db_models.Category).filter(db_models.Category.id == category_id).first()
+    if not db_category:
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
 
-    for channel in rss_channels_store.values():
-        if channel.category_id == category_id:
-            raise HTTPException(status_code=409, detail="Categoría asociada a canales RSS")
+    # Comprobamos si hay algún canal RSS asociado a esta categoría
+    # (Ajusta 'db_models.RSSChannel' si tu modelo se llama de otra forma)
+    associated_channel = db.query(db_models.RSSChannel).filter(db_models.RSSChannel.category_id == category_id).first()
+    
+    if associated_channel:
+        raise HTTPException(status_code=409, detail="Categoría asociada a canales RSS")
 
-    categories_store.pop(category_id, None)
+    db.delete(db_category)
+    db.commit()
 
 #CRUD information sources  
 @app.get(
@@ -970,9 +1098,9 @@ def delete_category(category_id: int, _: UserInDB = Depends(get_current_user)) -
     response_model=list[InformationSource],
     tags=["information-sources"],
 )
-def list_information_sources(_: UserInDB = Depends(get_current_user)) -> list[InformationSource]:
+def list_information_sources(_: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> list[InformationSource]:
     """Lista fuentes de información."""
-    return list(information_sources_store.values())
+    return db.query(db_models.InformationSource).all()
 
 
 @app.post(
@@ -984,12 +1112,16 @@ def list_information_sources(_: UserInDB = Depends(get_current_user)) -> list[In
 def create_information_source(
     payload: InformationSourceCreate,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> InformationSource:
     """Crea una fuente de información."""
-    source_id = next_id("information_sources")
-    source = InformationSource(id=source_id, **payload.model_dump())
-    information_sources_store[source_id] = source
-    return source
+    db_source = db_models.InformationSource(**payload.model_dump())
+    
+    db.add(db_source)
+    db.commit()
+    db.refresh(db_source)
+    
+    return db_source
 
 
 @app.get(
@@ -997,12 +1129,14 @@ def create_information_source(
     response_model=InformationSource,
     tags=["information-sources"],
 )
-def get_information_source(source_id: int, _: UserInDB = Depends(get_current_user)) -> InformationSource:
+def get_information_source(source_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> InformationSource:
     """Obtiene una fuente de información por identificador."""
-    source = information_sources_store.get(source_id)
-    if not source:
+    db_source = db.query(db_models.InformationSource).filter(db_models.InformationSource.id == source_id).first()
+    
+    if not db_source:
         raise HTTPException(status_code=404, detail="Fuente de información no encontrada")
-    return source
+        
+    return db_source
 
 
 @app.put(
@@ -1014,14 +1148,22 @@ def update_information_source(
     source_id: int,
     payload: InformationSourceUpdate,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> InformationSource:
     """Actualiza una fuente de información existente."""
-    source = information_sources_store.get(source_id)
-    if not source:
+    db_source = db.query(db_models.InformationSource).filter(db_models.InformationSource.id == source_id).first()
+    
+    if not db_source:
         raise HTTPException(status_code=404, detail="Fuente de información no encontrada")
-    updated = source.model_copy(update=payload.model_dump(exclude_unset=True))
-    information_sources_store[source_id] = updated
-    return updated
+        
+    update_data = payload.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_source, key, value)
+        
+    db.commit()
+    db.refresh(db_source)
+    
+    return db_source
 
 
 @app.delete(
@@ -1031,16 +1173,17 @@ def update_information_source(
     response_class=Response,
     tags=["information-sources"],
 )
-def delete_information_source(source_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+def delete_information_source(source_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
     """Elimina una fuente y sus canales RSS asociados."""
-    if source_id not in information_sources_store:
+    db_source = db.query(db_models.InformationSource).filter(db_models.InformationSource.id == source_id).first()
+    
+    if not db_source:
         raise HTTPException(status_code=404, detail="Fuente de información no encontrada")
 
-    channel_ids = [channel.id for channel in rss_channels_store.values() if channel.information_source_id == source_id]
-    for channel_id in channel_ids:
-        rss_channels_store.pop(channel_id, None)
-
-    information_sources_store.pop(source_id, None)
+    # Al borrar el objeto de la base de datos, PostgreSQL ejecutará un ON DELETE CASCADE
+    # para eliminar automáticamente los registros dependientes en la tabla de canales RSS.
+    db.delete(db_source)
+    db.commit()
 
 #CRUD source channels 
 
@@ -1049,10 +1192,10 @@ def delete_information_source(source_id: int, _: UserInDB = Depends(get_current_
     response_model=list[RSSChannel],
     tags=["rss-channels"],
 )
-def list_source_channels(source_id: int, _: UserInDB = Depends(get_current_user)) -> list[RSSChannel]:
+def list_source_channels(source_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> list[RSSChannel]:
     """Lista canales RSS de una fuente."""
-    ensure_information_source_exists(source_id)
-    return [channel for channel in rss_channels_store.values() if channel.information_source_id == source_id]
+    ensure_information_source_exists(source_id, db)
+    return db.query(db_models.RSSChannel).filter(db_models.RSSChannel.information_source_id == source_id).all()
 
 
 @app.post(
@@ -1065,19 +1208,20 @@ def create_source_channel(
     source_id: int,
     payload: RSSChannelCreate,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> RSSChannel:
     """Crea un canal RSS para una fuente de información."""
-    ensure_information_source_exists(source_id)
-    ensure_category_exists(payload.category_id)
+    ensure_information_source_exists(source_id, db)
+    ensure_category_exists(payload.category_id, db)
 
-    channel_id = next_id("rss_channels")
-    channel = RSSChannel(
-        id=channel_id,
+    db_channel = db_models.RSSChannel(
         information_source_id=source_id,
         **payload.model_dump(),
     )
-    rss_channels_store[channel_id] = channel
-    return channel
+    db.add(db_channel)
+    db.commit()
+    db.refresh(db_channel)
+    return db_channel
 
 
 @app.get(
@@ -1089,10 +1233,11 @@ def get_source_channel(
     source_id: int,
     channel_id: int,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> RSSChannel:
     """Obtiene un canal RSS concreto de una fuente."""
-    ensure_information_source_exists(source_id)
-    return ensure_rss_for_source(source_id, channel_id)
+    ensure_information_source_exists(source_id, db)
+    return ensure_rss_for_source(source_id, channel_id, db)
 
 
 @app.put(
@@ -1105,18 +1250,22 @@ def update_source_channel(
     channel_id: int,
     payload: RSSChannelUpdate,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> RSSChannel:
     """Actualiza un canal RSS existente."""
-    ensure_information_source_exists(source_id)
-    channel = ensure_rss_for_source(source_id, channel_id)
+    ensure_information_source_exists(source_id, db)
+    db_channel = ensure_rss_for_source(source_id, channel_id, db)
 
     update_data = payload.model_dump(exclude_unset=True)
     if "category_id" in update_data:
-        ensure_category_exists(update_data["category_id"])
+        ensure_category_exists(update_data["category_id"], db)
 
-    updated = channel.model_copy(update=update_data)
-    rss_channels_store[channel_id] = updated
-    return updated
+    for key, value in update_data.items():
+        setattr(db_channel, key, value)
+
+    db.commit()
+    db.refresh(db_channel)
+    return db_channel
 
 
 @app.delete(
@@ -1130,11 +1279,14 @@ def delete_source_channel(
     source_id: int,
     channel_id: int,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> None:
     """Elimina un canal RSS de una fuente."""
-    ensure_information_source_exists(source_id)
-    ensure_rss_for_source(source_id, channel_id)
-    rss_channels_store.pop(channel_id, None)
+    ensure_information_source_exists(source_id, db)
+    db_channel = ensure_rss_for_source(source_id, channel_id, db)
+    
+    db.delete(db_channel)
+    db.commit()
 
 
 #CRUD stats 
