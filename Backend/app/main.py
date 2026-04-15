@@ -16,7 +16,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field, HttpUrl
-
+from sqlalchemy.orm import Session
+from app.db.database import *
+from app.models import models as db_models
 from app.core.security import (
     create_verification_token,
     send_alert_email,
@@ -27,6 +29,7 @@ ELASTICSEARCH_URL = "http://localhost:9200"
 
 # 2. Instanciar el cliente global
 es_client = Elasticsearch(ELASTICSEARCH_URL)
+Base.metadata.create_all(bind=engine)
 
 
 def check_elastic_connection():
@@ -42,6 +45,7 @@ def check_elastic_connection():
             print("[STARTUP] No se pudo conectar a Elasticsearch (el ping devolvió False).")
     except Exception as e:
         print(f"[STARTUP] Error crítico al intentar conectar con Elasticsearch: {e}")
+        
 
 
 app = FastAPI(
@@ -275,15 +279,35 @@ def next_id(counter_key: str) -> int:
     return value
 
 
-def ensure_role_ids_exist(role_ids: list[int]) -> None:
-    """Valida que todos los IDs de rol existen en memoria."""
-    missing = [role_id for role_id in role_ids if role_id not in roles_store]
+# def ensure_role_ids_exist(role_ids: list[int]) -> None:
+#     """Valida que todos los IDs de rol existen en memoria."""
+#     missing = [role_id for role_id in role_ids if role_id not in roles_store]
+#     if missing:
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail=f"Roles no encontrados: {missing}",
+#       
+# )
+def ensure_role_ids_exist(role_ids: list[int], db: Session) -> None:
+    """Verifica en PostgreSQL que los IDs de roles proporcionados existen."""
+    if not role_ids:
+        return
+    
+    # Consultamos solo la columna 'id' de los roles que coinciden con la lista
+    existing_roles = db.query(db_models.Role.id).filter(db_models.Role.id.in_(role_ids)).all()
+    
+    # existing_roles es una lista de tuplas, ej: [(1,), (2,)]
+    # Lo aplanamos en un set para que la búsqueda sea O(1)
+    existing_role_ids = {r[0] for r in existing_roles}
+    
+    # Calculamos cuáles faltan exactamente como hacías en memoria
+    missing = [role_id for role_id in role_ids if role_id not in existing_role_ids]
+    
     if missing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Roles no encontrados: {missing}",
         )
-
 
 def ensure_user_exists(user_id: int) -> None:
     """Lanza 404 si el usuario no existe."""
@@ -327,18 +351,31 @@ def ensure_rss_for_source(source_id: int, channel_id: int) -> RSSChannel:
     return channel
 
 
-def sanitize_user(user: UserInDB) -> User:
-    """Devuelve la representación pública de usuario sin contraseña."""
+# ef sanitize_user(user: UserInDB) -> User:
+#    """Devuelve la representación pública de usuario sin contraseña."""
+#    return User(
+#        id=user.id,
+#        email=user.email,
+#        first_name=user.first_name,
+#        last_name=user.last_name,
+#        organization=user.organization,
+#        role_ids=user.role_ids,
+#        is_verified=user.is_verified,  # Este campo se incluye para que el cliente sepa si el usuario está verificado o no
+#    )
+def sanitize_user(user_db: models.User) -> User:
+    """Convierte el modelo SQLAlchemy a tu modelo Pydantic de salida exacto."""
+    # Extraemos los IDs de la relación Muchos-a-Muchos de SQLAlchemy
+    role_ids = [role.id for role in user_db.roles] if user_db.roles else []
+    
     return User(
-        id=user.id,
-        email=user.email,
-        first_name=user.first_name,
-        last_name=user.last_name,
-        organization=user.organization,
-        role_ids=user.role_ids,
-        is_verified=user.is_verified,  # Este campo se incluye para que el cliente sepa si el usuario está verificado o no
+        id=user_db.id,
+        email=user_db.email,
+        first_name=user_db.first_name,
+        last_name=user_db.last_name,
+        organization=user_db.organization,
+        role_ids=role_ids
+        # Omito el password y el is_verified asumiendo que tu Pydantic 'User' base no los expone.
     )
-
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -360,28 +397,33 @@ def get_current_user(
 
 def create_seed_data() -> None:
     """Inicializa roles, usuario admin y semilla de fuentes/canales RSS."""
-    if roles_store:
-        return
+    db = SessionLocal()
+    try:
+        # 1. Crear Roles iniciales usando db_models
+        roles_nombres = ["lector", "gestor"]
+        for nombre in roles_nombres:
+            if not db.query(db_models.Role).filter(db_models.Role.name == nombre).first():
+                db.add(db_models.Role(name=nombre))
+        db.commit()
 
-    admin_role_id = next_id("roles")
-    roles_store[admin_role_id] = Role(id=admin_role_id, name="admin")
-
-    user_role_id = next_id("roles")
-    roles_store[user_role_id] = Role(id=user_role_id, name="user")
-
-    admin_user_id = next_id("users")
-    users_store[admin_user_id] = UserInDB(
-        id=admin_user_id,
-        email="admin@newsradar.com",
-        first_name="Admin",
-        last_name="NewsRadar",
-        organization="NewsRadar",
-        role_ids=[admin_role_id],
-        password="admin123",
-        is_verified=True,
-    )
-
-    stats_store[1] = Stats(id=1, total_news=0, total_notifications=0)
+        # 2. Crear Usuario Admin
+        admin_email = "admin@newsradar.com"
+        if not db.query(db_models.User).filter(db_models.User.email == admin_email).first():
+            gestor_role = db.query(db_models.Role).filter(db_models.Role.name == "gestor").first()
+            admin_user = db_models.User(
+                email=admin_email,
+                first_name="Admin",
+                last_name="NewsRadar",
+                organization="UC3M",
+                password="admin123", 
+                is_verified=True,
+                roles=[gestor_role] if gestor_role else []
+            )
+            db.add(admin_user)
+            db.commit()
+            print("[DB] Datos iniciales creados con éxito.")
+    except Exception as e:
+        print(f"[DB] Error en el seeding: {e}")
 
     # --- 2. CARGA DE FUENTES Y CANALES RSS DESDE EL JSON ---
     base_dir = Path(__file__).resolve().parent
@@ -432,7 +474,8 @@ def on_startup() -> None:
     """Ejecuta inicialización de datos y arranca el motor RSS."""
     create_seed_data()
     check_elastic_connection()
-    _ = asyncio.create_task(rss_fetcher_engine())
+    
+    #_ = asyncio.create_task(rss_fetcher_engine())
 
 
 @app.get(f"{API_PREFIX}/health", tags=["system"])
@@ -442,33 +485,52 @@ def health() -> dict:
 
 
 @app.post(f"{API_PREFIX}/auth/login", response_model=TokenResponse, tags=["auth"])
-def login(payload: LoginRequest) -> TokenResponse:
+def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
     """Autentica credenciales y emite token de sesión en memoria."""
-    user = next((u for u in users_store.values() if u.email == payload.email), None)
-    if user is None or user.password != payload.password:
+    # Búsqueda real en la base de datos
+    db_user = db.query(db_models.User).filter(db_models.User.email == payload.email).first()
+    
+    if db_user is None or db_user.password != payload.password:
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
     token = str(uuid4())
-    active_tokens[token] = user.id
+    active_tokens[token] = db_user.id
     return TokenResponse(access_token=token)
 
 
 @app.post(f"{API_PREFIX}/auth/register", response_model=User, tags=["auth"])
-def register(payload: UserCreate) -> User:
+def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     """Registra un usuario nuevo y envía email de verificación."""
-    if any(user.email == payload.email for user in users_store.values()):
+    # Validación contra la tabla users
+    if db.query(db_models.User).filter(db_models.User.email == payload.email).first():
         raise HTTPException(status_code=409, detail="El email ya está registrado")
 
-    ensure_role_ids_exist(payload.role_ids)
+    # Validación de roles inyectando la sesión de BD
+    ensure_role_ids_exist(payload.role_ids, db)
 
-    user_id = next_id("users")
-    user_db = UserInDB(id=user_id, **payload.model_dump())
-    users_store[user_id] = user_db
-    # verificacion de Email
-    token = create_verification_token(user_db.email)
-    send_verification_email(user_db.email, token)
+    # Obtenemos los objetos Role de la BD para asociarlos al usuario
+    db_roles = db.query(db_models.Role).filter(db_models.Role.id.in_(payload.role_ids)).all()
 
-    return sanitize_user(user_db)
+    # Creación del modelo ORM
+    new_user = db_models.User(
+        email=payload.email,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        organization=payload.organization,
+        password=payload.password,
+        is_verified=False,
+        roles=db_roles
+    )
+    
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    # Verificación de Email
+    token = create_verification_token(new_user.email)
+    send_verification_email(new_user.email, token)
+
+    return sanitize_user(new_user)
 
 
 @app.get(f"{API_PREFIX}/auth/verify", tags=["auth"])
@@ -511,6 +573,7 @@ def verify_email(token: str):
 
     return {"msg": "Cuenta verificada con éxito. Ya puedes iniciar sesión."}
 
+# CRUD USERS
 
 @app.get(f"{API_PREFIX}/users", response_model=list[User], tags=["users"])
 def list_users(_: UserInDB = Depends(get_current_user)) -> list[User]:
@@ -580,6 +643,8 @@ def delete_user(user_id: int, _: UserInDB = Depends(get_current_user)) -> None:
     users_store.pop(user_id, None)
 
 
+#CRUD ROLES 
+
 @app.get(f"{API_PREFIX}/roles", response_model=list[Role], tags=["roles"])
 def list_roles(_: UserInDB = Depends(get_current_user)) -> list[Role]:
     """Lista todos los roles."""
@@ -636,6 +701,7 @@ def delete_role(role_id: int, _: UserInDB = Depends(get_current_user)) -> None:
 
     roles_store.pop(role_id, None)
 
+#CRUD user alerts 
 
 @app.get(
     f"{API_PREFIX}/users/{{user_id}}/alerts",
@@ -749,7 +815,9 @@ def delete_user_alert(user_id: int, alert_id: int, current_user: UserInDB = Depe
     for notification_id in notification_ids:
         notifications_store.pop(notification_id, None)
     alerts_store.pop(alert_id, None)
-
+    
+    
+#CRUD alert notifications 
 
 @app.get(
     f"{API_PREFIX}/users/{{user_id}}/alerts/{{alert_id}}/notifications",
@@ -841,6 +909,8 @@ def delete_alert_notification(
     notifications_store.pop(notification_id, None)
 
 
+#CRUD categorias 
+
 @app.get(f"{API_PREFIX}/categories", response_model=list[Category], tags=["categories"])
 def list_categories(_: UserInDB = Depends(get_current_user)) -> list[Category]:
     """Lista categorías configuradas."""
@@ -894,7 +964,7 @@ def delete_category(category_id: int, _: UserInDB = Depends(get_current_user)) -
 
     categories_store.pop(category_id, None)
 
-
+#CRUD information sources  
 @app.get(
     f"{API_PREFIX}/information-sources",
     response_model=list[InformationSource],
@@ -972,6 +1042,7 @@ def delete_information_source(source_id: int, _: UserInDB = Depends(get_current_
 
     information_sources_store.pop(source_id, None)
 
+#CRUD source channels 
 
 @app.get(
     f"{API_PREFIX}/information-sources/{{source_id}}/rss-channels",
@@ -1065,6 +1136,8 @@ def delete_source_channel(
     ensure_rss_for_source(source_id, channel_id)
     rss_channels_store.pop(channel_id, None)
 
+
+#CRUD stats 
 
 @app.get(f"{API_PREFIX}/stats", response_model=list[Stats], tags=["stats"])
 def list_stats(_: UserInDB = Depends(get_current_user)) -> list[Stats]:
@@ -1235,4 +1308,4 @@ async def rss_fetcher_engine():
         print("[MOTOR RSS] Ciclo completado. Durmiendo 15 minutos...")
         # Esperamos 15 minutos (900 segundos) hasta la próxima batida
         # await asyncio.sleep(900)
-        await asyncio.sleep(30)  # Para pruebas, lo dejamos en 1 minuto
+        await asyncio.sleep(1500)  # Para pruebas, lo dejamos en 1 minuto
