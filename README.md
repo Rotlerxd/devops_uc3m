@@ -8,7 +8,7 @@ Sistema de monitorización de noticias — UC3M Desarrollo y Operación de Siste
 |---|---|
 | Backend | FastAPI + Python 3.11 |
 | Frontend | React 19 + Vite |
-| Database | PostgreSQL 15 + SQLAlchemy 2.0 (async) |
+| Database | In-memory stores (Python dict) |
 | Search | Elasticsearch 8.12 |
 | Deployment | Docker / Docker Compose |
 | CI/CD | GitHub Actions |
@@ -16,7 +16,7 @@ Sistema de monitorización de noticias — UC3M Desarrollo y Operación de Siste
 ## Quick Start
 
 ```bash
-# Start databases
+# Start Elasticsearch
 cd Backend && docker compose up -d
 
 # Start backend
@@ -45,7 +45,7 @@ make ci            # Full CI pipeline locally
 
 ```bash
 make test-unit           # Backend unit tests
-make test-integration    # Backend integration tests (needs PostgreSQL)
+make test-functional     # Backend functional tests
 make test-frontend       # Frontend Vitest tests
 make test-e2e            # E2E Playwright tests
 make coverage            # Backend tests with coverage report
@@ -64,7 +64,7 @@ pre-commit install
 
 GitHub Actions runs on every push to `main` and on pull requests:
 
-- **Backend:** Ruff lint, Ty type check, pytest unit + integration tests
+- **Backend:** Ruff lint, Ty type check, pytest unit + functional tests
 - **Frontend:** Vitest tests, build check
 - **E2E:** Playwright smoke + auth tests
 - **Security:** pip-audit, npm audit, Trivy container scan
@@ -100,7 +100,7 @@ Architecture decisions are documented in [docs/adr/](docs/adr/):
 | [0001](docs/adr/0001-framework-backend-fastapi.md) | Framework backend: FastAPI + Pydantic V2 |
 | [0002](docs/adr/0002-autenticacion-jwt.md) | Autenticación: JWT stateless |
 | [0003](docs/adr/0003-verificacion-email-smtplib-mailtrap.md) | Email: smtplib + Mailtrap |
-| [0004](docs/adr/0004-persistencia-en-memoria) | ORM: SQLAlchemy 2.0 async + PostgreSQL 15 |
+| [0004](docs/adr/0004-persistencia-en-memoria) | Persistencia: Python dict in-memory |
 | [0005](docs/adr/0005-frontend-react-vite.md) | Frontend: React 19 + Vite |
 | [0006](docs/adr/0006-elasticsearch-indexacion-noticias.md) | Búsqueda: Elasticsearch 8.12 |
 | [0007](docs/adr/0007-frontend-bootstrap-react-router.md) | UI: Bootstrap 5 + React Router |
