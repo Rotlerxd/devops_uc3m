@@ -5,7 +5,7 @@ import smtplib
 from datetime import UTC, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-
+from pathlib import Path
 from dotenv import load_dotenv
 from fastapi.security import HTTPBearer
 from jose import jwt
@@ -13,22 +13,27 @@ from passlib.context import CryptContext
 
 # --- Variables de entorno ---
 
-SECRET_KEY = os.getenv("SECRET_KEY", "newsradar_secret_key_temporal")
+env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
+
+SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 VERIFICATION_TOKEN_EXPIRE_HOURS = 24
 
-MAILTRAP_HOST = os.getenv("MAILTRAP_HOST", "sandbox.smtp.mailtrap.io")
+MAILTRAP_HOST = os.getenv("MAILTRAP_HOST")
 MAILTRAP_PORT = int(os.getenv("MAIL_PORT", 2525))
-MAILTRAP_USER = os.getenv("MAIL_USERNAME", "f7aab98648814d")
-MAILTRAP_PASS = os.getenv("MAIL_PASSWORD", "b34ae07bf8e257")
+MAILTRAP_USER = os.getenv("MAIL_USERNAME")
+MAILTRAP_PASS = os.getenv("MAIL_PASSWORD")
 
-GMAIL_HOST = os.getenv("GMAIL_HOST", "smtp.gmail.com")
+GMAIL_HOST = os.getenv("GMAIL_HOST")
 GMAIL_PORT = int(os.getenv("GMAIL_PORT", 587))
-GMAIL_USER = os.getenv("GMAIL_USER", "newsradar.app.noreply@gmail.com")
-GMAIL_PASS = os.getenv("GMAIL_PASS", "bhpjehrlnapjpzgj")
+GMAIL_USER = os.getenv("GMAIL_USER")
+GMAIL_PASS = os.getenv("GMAIL_PASS")
 
 # bhpj ehrl napj pzgj
+
+
 
 # --- Configuración de bcrypt ---
 
@@ -74,11 +79,11 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
 
 def send_verification_email(to_email: str, token: str):
     """Envía el correo de verificación de cuenta vía SMTP."""
-    load_dotenv()
+    load_dotenv(dotenv_path=env_path)
 
     msg = MIMEMultipart()
     msg["Subject"] = "NEWSRADAR - Verifica tu cuenta"
-    msg["From"] = "newsradar.app.noreply@gmail.com"
+    msg["From"] = GMAIL_USER
     msg["To"] = to_email
 
     verification_link = f"http://localhost:8000/api/v1/auth/verify?token={token}"
@@ -120,13 +125,13 @@ def send_alert_email(to_email: str, alert_name: str, news_data):
     """
     Envía el correo de alerta de noticias siguiendo el formato estricto del Sprint 3.2.
     """
-    load_dotenv()
+    load_dotenv(dotenv_path=env_path)
 
     msg = MIMEMultipart()
     # 1. ASUNTO ESTRICTO: “Actualización de <alerta> en <día/hora>”
     now_str = datetime.now().strftime("%d/%m/%Y %H:%M")
     msg["Subject"] = f"Actualización de {alert_name} en {now_str}"
-    msg["From"] = os.getenv("GMAIL_USER", "newsradar.app.noreply@gmail.com")
+    msg["From"] = GMAIL_USER
     msg["To"] = to_email
 
     # 2. CUERPO HTML (Siguiendo tu estilo pero con los datos requeridos)

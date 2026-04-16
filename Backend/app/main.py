@@ -1,5 +1,6 @@
 """API backend de NewsRadar con modelos, endpoints y motor RSS en memoria."""
 
+
 from __future__ import annotations
 
 import asyncio
@@ -8,7 +9,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
-
+from dotenv import load_dotenv
 import feedparser
 from elasticsearch import Elasticsearch
 from fastapi import Depends, FastAPI, HTTPException, Response, status
@@ -17,15 +18,21 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field, HttpUrl
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from app.db.database import *
 from app.models import models as db_models
 from app.core.security import (
     create_verification_token,
     send_alert_email,
     send_verification_email,
+    get_password_hash,
+    verify_password,
 )
 
 ELASTICSEARCH_URL = "http://localhost:9200"
+
+env_path = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
 # 2. Instanciar el cliente global
 es_client = Elasticsearch(ELASTICSEARCH_URL)
@@ -278,7 +285,7 @@ def next_id(counter_key: str) -> int:
     counters[counter_key] += 1
     return value
 
-def ensure_role_ids_exist(role_ids: list[int], db: Session) -> None:
+def ensure_role_ids_exist(role_ids: list[int], db: Session = Depends(get_db)) -> None:
     """Verifica en PostgreSQL que los IDs de roles proporcionados existen."""
     if not role_ids:
         return
@@ -299,12 +306,12 @@ def ensure_role_ids_exist(role_ids: list[int], db: Session) -> None:
             detail=f"Roles no encontrados: {missing}",
         )
 
-def ensure_user_exists(user_id: int, db: Session) -> None:
+def ensure_user_exists(user_id: int, db: Session = Depends(get_db)) -> None:
     """Lanza 404 si el usuario no existe en la base de datos."""
     if not db.query(db_models.User).filter(db_models.User.id == user_id).first():
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-def ensure_alert_for_user(user_id: int, alert_id: int, db: Session):
+def ensure_alert_for_user(user_id: int, alert_id: int, db: Session = Depends(get_db)):
     """Obtiene una alerta de un usuario o lanza 404 si no corresponde."""
     # Opcional: puedes dejar la llamada a ensure_user_exists si quieres doble check, 
     # pero con la consulta de abajo es suficiente para proteger el endpoint.
@@ -319,7 +326,7 @@ def ensure_alert_for_user(user_id: int, alert_id: int, db: Session):
     return db_alert
 
 
-def ensure_notification_for_alert(alert_id: int, notification_id: int, db: Session):
+def ensure_notification_for_alert(alert_id: int, notification_id: int, db: Session = Depends(get_db)):
     """Obtiene una notificación de una alerta o lanza 404 buscando en PostgreSQL."""
     db_notification = db.query(db_models.Notification).filter(
         db_models.Notification.id == notification_id,
@@ -332,19 +339,19 @@ def ensure_notification_for_alert(alert_id: int, notification_id: int, db: Sessi
     return db_notification
 
 
-def ensure_information_source_exists(source_id: int, db: Session) -> None:
+def ensure_information_source_exists(source_id: int, db: Session = Depends(get_db)) -> None:
     """Lanza 404 si la fuente de información no existe."""
     if not db.query(db_models.InformationSource).filter(db_models.InformationSource.id == source_id).first():
         raise HTTPException(status_code=404, detail="Fuente de información no encontrada")
 
 
-def ensure_category_exists(category_id: int, db: Session) -> None:
+def ensure_category_exists(category_id: int, db: Session = Depends(get_db)) -> None:
     """Lanza 404 si la categoría no existe."""
     if not db.query(db_models.Category).filter(db_models.Category.id == category_id).first():
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
 
 
-def ensure_rss_for_source(source_id: int, channel_id: int, db: Session) -> RSSChannel:
+def ensure_rss_for_source(source_id: int, channel_id: int, db: Session = Depends(get_db)) -> RSSChannel:
     """Obtiene un canal RSS de una fuente concreta o lanza 404."""
     db_channel = db.query(db_models.RSSChannel).filter(
         db_models.RSSChannel.id == channel_id,
@@ -354,7 +361,7 @@ def ensure_rss_for_source(source_id: int, channel_id: int, db: Session) -> RSSCh
         raise HTTPException(status_code=404, detail="Canal RSS no encontrado para la fuente")
     return db_channel
 
-def sanitize_user(user_db: models.User, db: Session) -> User:
+def sanitize_user(user_db: models.User, db: Session = Depends(get_db)) -> User:
     """Convierte el modelo SQLAlchemy a tu modelo Pydantic de salida exacto."""
     # Extraemos los IDs de la relación Muchos-a-Muchos de SQLAlchemy
     role_ids = [role.id for role in user_db.roles] if user_db.roles else []
@@ -498,7 +505,8 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
     # Búsqueda real en la base de datos
     db_user = db.query(db_models.User).filter(db_models.User.email == payload.email).first()
     
-    if db_user is None or db_user.password != payload.password:
+    # Usamos verify_password para comparar el texto plano con el hash guardado en BD
+    if db_user is None or not verify_password(payload.password, db_user.password):
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
     token = str(uuid4())
@@ -519,13 +527,16 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     # Obtenemos los objetos Role de la BD para asociarlos al usuario
     db_roles = db.query(db_models.Role).filter(db_models.Role.id.in_(payload.role_ids)).all()
 
-    # Creación del modelo ORM
+    # Generamos el hash a partir de la contraseña que mandó el usuario
+    hashed_pwd = get_password_hash(payload.password)
+
+    # Creación del modelo ORM (inyectando el hash)
     new_user = db_models.User(
         email=payload.email,
         first_name=payload.first_name,
         last_name=payload.last_name,
         organization=payload.organization,
-        password=payload.password,
+        password=hashed_pwd,  # ¡Aquí guardamos el hash seguro!
         is_verified=False,
         roles=db_roles
     )
@@ -538,7 +549,7 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     token = create_verification_token(new_user.email)
     send_verification_email(new_user.email, token)
 
-    return sanitize_user(new_user)
+    return sanitize_user(new_user, db)
 
 
 @app.get(f"{API_PREFIX}/auth/verify", tags=["auth"])
@@ -603,9 +614,14 @@ def create_user(payload: UserCreate, _: UserInDB = Depends(get_current_user), db
     ensure_role_ids_exist(payload.role_ids, db)
     db_roles = db.query(db_models.Role).filter(db_models.Role.id.in_(payload.role_ids)).all()
 
-    # 3. Crear el usuario (excluimos role_ids del dump para meter los objetos ORM)
-    user_data = payload.model_dump(exclude={"role_ids"})
-    new_user = db_models.User(**user_data, roles=db_roles)
+    # 3. Hashear la contraseña
+    hashed_pwd = get_password_hash(payload.password)
+    
+    # 4. Crear el usuario (excluimos role_ids y password plana)
+    user_data = payload.model_dump(exclude={"role_ids", "password"})
+    
+    # Inyectamos el hash explícitamente (si tu columna se llama 'password', cambia la key)
+    new_user = db_models.User(**user_data, hashed_password=hashed_pwd, roles=db_roles)
     
     db.add(new_user)
     db.commit()
@@ -1325,6 +1341,45 @@ def delete_stats(stats_id: int, _: UserInDB = Depends(get_current_user), db: Ses
     db.delete(db_stats)
     db.commit()
 
+def update_global_stats(db: Session) -> db_models.Stats:
+    """
+    Calcula las estadísticas globales consultando la BD.
+    Usa el registro con ID=1 como caché global.
+    """
+    # 1. Contamos las filas de las tablas que sí tienes en PostgreSQL
+    t_notifications = db.query(func.count(db_models.Notification.id)).scalar() or 0
+    t_users = db.query(func.count(db_models.User.id)).scalar() or 0
+    t_alerts = db.query(func.count(db_models.Alert.id)).scalar() or 0
+    t_sources = db.query(func.count(db_models.InformationSource.id)).scalar() or 0
+    t_channels = db.query(func.count(db_models.RSSChannel.id)).scalar() or 0
+
+    # 2. Estructuramos el JSON de 'metrics' como una lista de diccionarios
+    # para respetar tu modelo (default=list)
+    current_metrics = [
+        {"metric_name": "total_users", "value": t_users},
+        {"metric_name": "total_alerts", "value": t_alerts},
+        {"metric_name": "total_information_sources", "value": t_sources},
+        {"metric_name": "total_rss_channels", "value": t_channels}
+    ]
+
+    # 3. Buscamos el registro global (asumimos que el ID 1 es nuestro "dashboard")
+    db_stats = db.query(db_models.Stats).filter(db_models.Stats.id == 1).first()
+    
+    if not db_stats:
+        # Si la tabla está vacía, creamos el registro base
+        db_stats = db_models.Stats(id=1, total_news=0)
+        db.add(db_stats)
+
+    # 4. Actualizamos los campos
+    db_stats.total_notifications = t_notifications
+    db_stats.metrics = current_metrics
+    # Nota: total_news no lo tocamos aquí porque ese dato se traerá de Elasticsearch
+
+    # 5. Guardamos en base de datos
+    db.commit()
+    db.refresh(db_stats)
+    
+    return db_stats
 
 async def rss_fetcher_engine():
     """Ejecuta en bucle la captura RSS, indexación y generación de notificaciones."""
@@ -1489,7 +1544,10 @@ async def rss_fetcher_engine():
             # Guardamos todos los cambios en la BD (Notificaciones nuevas y actualización de Stats)
             db.commit()
 
-        print("[MOTOR RSS] Ciclo completado. Durmiendo 15 minutos...")
+        
+        print("[MOTOR RSS] Actualizando estadísticas globales...")
+        update_global_stats(db)  # Actualizamos las estadísticas globales al finalizar el ciclo
         # Esperamos 15 minutos (900 segundos) hasta la próxima batida
+        print("[MOTOR RSS] Ciclo completado. Durmiendo 15 minutos...")
         # await asyncio.sleep(900)
         await asyncio.sleep(60)  # Para pruebas, lo dejamos en el valor que tenías
