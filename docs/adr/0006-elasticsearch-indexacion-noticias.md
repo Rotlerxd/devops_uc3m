@@ -73,7 +73,7 @@ de noticias, gestionado mediante el cliente oficial `elasticsearch-py`.
  
 | Sistema | Motor | Propósito |
 |---|---|---|
-| Entidades | Python `dict` in-memory (ver ADR 0004) | Usuarios, alertas, fuentes, roles |
+| Entidades | SQLAlchemy 2.0 async + PostgreSQL 15 (ver ADR 0004) | Usuarios, alertas, fuentes, roles |
 | Noticias / búsqueda | Elasticsearch 8.12 (este ADR) | Indexación y búsqueda de texto completo |
  
 ## Índices previstos
