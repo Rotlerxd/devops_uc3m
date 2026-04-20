@@ -12,7 +12,9 @@ test.describe('Auth flow', () => {
   test('register page has form fields', async ({ page }) => {
     await page.goto('/register');
 
-    await expect(page.getByLabel('Nombre completo')).toBeVisible();
+    await expect(page.getByLabel('Nombre')).toBeVisible();
+    await expect(page.getByLabel('Apellidos')).toBeVisible();
+    await expect(page.getByLabel('Organización')).toBeVisible();
     await expect(page.getByLabel('Correo electrónico')).toBeVisible();
     await expect(page.getByLabel('Contraseña')).toBeVisible();
     await expect(page.getByRole('button', { name: /registrarse/i })).toBeVisible();
