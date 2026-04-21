@@ -1,0 +1,1 @@
+![Diagrama ER](./er-diagram.png)
