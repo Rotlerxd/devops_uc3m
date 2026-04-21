@@ -12,17 +12,658 @@
         "name": "Tecnología",
         "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/tecnologia/portada",
         "category": "Science and Technology"
+      },
+      {
+        "name": "Gastronomía",
+        "url": "https://feeds.elpais.com/mrss-s/list/ep/site/elpais.com/section/gastronomia",
+        "category": "Health"
+      },
+      {
+        "name": "Deportes",
+        "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/deportes/portada",
+        "category": "Sport"
+      },
+      {
+        "name": "Clima",
+        "url": "https://feeds.elpais.com/mrss-s/list/ep/site/elpais.com/section/clima-y-medio-ambiente",
+        "category": "Weather"
+      },
+      {
+        "name": "Arte y cultura",
+        "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/cultura/portada",
+        "category": "Arts, culture, entertainment and media"
+      },
+      {
+        "name": "Educación",
+        "url": "https://feeds.elpais.com/mrss-s/list/ep/site/elpais.com/section/educacion",
+        "category": "Education"
+      },
+      {
+        "name": "Motor",
+        "url": "http://elpais.com/tag/rss/deportes_motor/a/",
+        "category": "Sport"
+      },
+      {
+        "name": "Sociedad",
+        "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/sociedad/portada",
+        "category": "Society"
+      },
+      {
+        "name": "Ciencia",
+        "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/ciencia/portada",
+        "category": "Science and Technology"
       }
     ]
   },
   {
-    "source_name": "BBC News",
-    "description": "Noticias internacionales",
+    "source_name": "El Periódico",
+    "description": "Periódico generalista español",
     "channels": [
       {
-        "name": "World",
-        "url": "http://feeds.bbci.co.uk/news/world/rss.xml",
-        "category": "World"
+        "name": "Titulares",
+        "url": "https://www.elperiodico.com/es/cds/rss/?id=board.xml",
+        "category": "General"
+      },
+      {
+        "name": "Politica",
+        "url": "https://www.elperiodico.com/es/rss/politica/rss.xml",
+        "category": "Politics"
+      },
+      {
+        "name": "Economía",
+        "url": "https://www.elperiodico.com/es/rss/economia/rss.xml",
+        "category": "Economy, business and finance"
+      },
+      {
+        "name": "Medio Ambiente",
+        "url": "https://www.elperiodico.com/es/rss/medio-ambiente/rss.xml",
+        "category": "Environment"
+      },
+      {
+        "name": "Sanidad",
+        "url": "https://www.elperiodico.com/es/rss/sanidad/rss.xml",
+        "category": "Health"
+      },
+      {
+        "name": "Educación",
+        "url": "https://www.elperiodico.com/es/rss/educacion/rss.xml",
+        "category": "Education"
+      },
+      {
+        "name": "Motor",
+        "url": "https://www.elperiodico.com/es/rss/motor/rss.xml",
+        "category": "Sport"
+      },
+      {
+        "name": "Gente",
+        "url": "https://www.elperiodico.com/es/rss/gente/rss.xml",
+        "category": "Society"
+      },
+      {
+        "name": "Ciencia",
+        "url": "https://www.elperiodico.com/es/rss/ciencia/rss.xml",
+        "category": "Science and Technology"
+      },
+      {
+        "name": "Tecnología",
+        "url": "https://www.elperiodico.com/es/rss/tecnologia/rss.xml",
+        "category": "Science and Technology"
+      }
+    ]
+  },
+  {
+    "source_name": "ABC",
+    "description": "Periódico generalista español",
+    "channels": [
+      {
+        "name": "Estilo",
+        "url": "https://www.abc.es/rss/2.0/estilo/",
+        "category": "Lifestyle and leisure"
+      },
+      {
+        "name": "Titulares",
+        "url": "https://www.abc.es/rss/2.0/portada/",
+        "category": "General"
+      },
+      {
+        "name": "Economía",
+        "url": "https://www.abc.es/rss/2.0/economia/",
+        "category": "Economy, business and finance"
+      },
+      {
+        "name": "Sociedad",
+        "url": "https://www.abc.es/rss/2.0/sociedad/",
+        "category": "Society"
+      },
+      {
+        "name": "Ciencia",
+        "url": "https://www.abc.es/rss/2.0/ciencia/",
+        "category": "Science and Technology"
+      },
+      {
+        "name": "Cultura",
+        "url": "https://www.abc.es/rss/2.0/cultura/",
+        "category": "Arts, culture, entertainment and media"
+      },
+      {
+        "name": "Deportes",
+        "url": "https://www.abc.es/rss/2.0/deportes/",
+        "category": "Sport"
+      },
+      {
+        "name": "Bienestar",
+        "url": "https://www.abc.es/rss/2.0/bienestar/",
+        "category": "Health"
+      },
+      {
+        "name": "Tecnología",
+        "url": "https://www.abc.es/rss/2.0/tecnologia/",
+        "category": "Science and Technology"
+      },
+      {
+        "name": "Motor",
+        "url": "https://www.abc.es/rss/2.0/motor/",
+        "category": "Sport"
+      }
+    ]
+  },
+  {
+    "source_name": "La Sexta",
+    "description": "TV generalista español",
+    "channels": [
+      {
+        "name": "Titulares",
+        "url": "https://www.lasexta.com/rss/351410.xml",
+        "category": "General"
+      }
+    ]
+  },
+  {
+    "source_name": "Antena 3",
+    "description": "TV generalista español",
+    "channels": [
+      {
+        "name": "Titulares",
+        "url": "https://www.antena3.com/noticias/rss/4013050.xml",
+        "category": "General"
+      },
+      {
+        "name": "Sociedad",
+        "url": "https://www.antena3.com/noticias/rss/4043815.xml",
+        "category": "Society"
+      }
+    ]
+  },
+  {
+    "source_name": "RTVE",
+    "description": "TV generalista español",
+    "channels": [
+      {
+        "name": "Titulares",
+        "url": "https://api2.rtve.es/rss/temas_noticias.xml",
+        "category": "General"
+      },
+      {
+        "name": "Deportes",
+        "url": "https://api2.rtve.es/rss/temas_deportes.xml",
+        "category": "Sport"
+      },
+      {
+        "name": "Ciencia y Tecnología",
+        "url": "https://api2.rtve.es/rss/temas_ciencia-tecnologia.xml",
+        "category": "Science and Technology"
+      },
+      {
+        "name": "Cultura",
+        "url": "https://api2.rtve.es/rss/temas_cultura.xml",
+        "category": "Arts, culture, entertainment and media"
+      },
+      {
+        "name": "Economía",
+        "url": "https://api2.rtve.es/rss/temas_economia.xml",
+        "category": "Economy, business and finance"
+      },
+      {
+        "name": "Tiempo",
+        "url": "https://api2.rtve.es/rss/temas_tiempo.xml",
+        "category": "Weather"
+      },
+      {
+        "name": "Terremoto en Italia",
+        "url": "https://api2.rtve.es/rss/temas_terremoto-italia.xml",
+        "category": "Disaster, accident and emergency incident"
+      },
+      {
+        "name": "Oscar",
+        "url": "https://api2.rtve.es/rss/temas_oscar.xml",
+        "category": "Arts, culture, entertainment and media"
+      },
+      {
+        "name": "Premios Goya",
+        "url": "https://api2.rtve.es/rss/temas_premios-goya.xml",
+        "category": "Arts, culture, entertainment and media"
+      },
+      {
+        "name": "Elecciones en Italia",
+        "url": "https://api2.rtve.es/rss/temas_elecciones-italia.xml",
+        "category": "Politics"
+      },
+      {
+        "name": "Premios Principes de Asturias",
+        "url": "https://api2.rtve.es/rss/temas_premios-principes-asturias.xml",
+        "category": "Arts, culture, entertainment and media"
+      }
+    ]
+  },
+  {
+    "source_name": "MARCA",
+    "description": "Periódico deportivo español",
+    "channels": [
+      {
+        "name": "Primera División",
+        "url": "https://objetos.estaticos-marca.com/rss/futbol/primera-division.xml",
+        "category": "Sport"
+      },
+      {
+        "name": "Segunda División",
+        "url": "https://objetos.estaticos-marca.com/rss/futbol/segunda-division.xml",
+        "category": "Sport"
+      },
+      {
+        "name": "Selección española",
+        "url": "https://objetos.estaticos-marca.com/rss/futbol/seleccion.xml",
+        "category": "Sport"
+      },
+      {
+        "name": "Champions League",
+        "url": "https://objetos.estaticos-marca.com/rss/futbol/champions-league.xml",
+        "category": "Sport"
+      },
+      {
+        "name": "Premier League",
+        "url": "https://objetos.estaticos-marca.com/rss/futbol/premier-league.xml",
+        "category": "Sport"
+      },
+      {
+        "name": "Real Madrid",
+        "url": "https://objetos.estaticos-marca.com/rss/futbol/real-madrid.xml",
+        "category": "Sport"
+      },
+      {
+        "name": "Atlético Madrid",
+        "url": "https://objetos.estaticos-marca.com/rss/futbol/atletico.xml",
+        "category": "Sport"
+      },
+      {
+        "name": "Barcelona",
+        "url": "https://objetos.estaticos-marca.com/rss/futbol/barcelona.xml",
+        "category": "Sport"
+      },
+      {
+        "name": "ACB",
+        "url": "https://objetos.estaticos-marca.com/rss/baloncesto/acb.xml",
+        "category": "Sport"
+      },
+      {
+        "name": "Formula 1",
+        "url": "https://objetos.estaticos-marca.com/rss/motor/formula1.xml",
+        "category": "Sport"
+      }
+    ]
+  },
+  {
+    "source_name": "Libertad Digital",
+    "description": "Periódico generalista español",
+    "channels": [
+      {
+        "name": "Titulares",
+        "url": "https://www.libertaddigital.com/rss.xml",
+        "category": "General"
+      },
+      {
+        "name": "Sucesos",
+        "url": "https://www.libertaddigital.com/sucesos/rss.xml",
+        "category": "Crime, law and justice"
+      },
+      {
+        "name": "Sociedad",
+        "url": "https://www.libertaddigital.com/sociedad/rss.xml",
+        "category": "Society"
+      },
+      {
+        "name": "El Tiempo",
+        "url": "https://www.libertaddigital.com/servicios/eltiempo/rss.xml",
+        "category": "Weather"
+      },
+      {
+        "name": "Defensa",
+        "url": "https://www.libertaddigital.com/defensa/rss.xml",
+        "category": "Conflict, war and peace"
+      },
+      {
+        "name": "Cultura",
+        "url": "https://www.libertaddigital.com/cultura/rss.xml",
+        "category": "Arts, culture, entertainment and media"
+      },
+      {
+        "name": "Historia",
+        "url": "https://www.libertaddigital.com/cultura/historia/rss.xml",
+        "category": "Arts, culture, entertainment and media"
+      },
+      {
+        "name": "Corazón",
+        "url": "https://www.libertaddigital.com/chic/corazon/rss.xml",
+        "category": "Human interest"
+      },
+      {
+        "name": "Vida y Estilo",
+        "url": "https://www.libertaddigital.com/chic/vida-estilo/rss.xml",
+        "category": "Lifestyle and leisure"
+      },
+      {
+        "name": "Ciencia y Tecnología",
+        "url": "https://www.libertaddigital.com/ciencia-tecnologia/rss.xml",
+        "category": "Science and technology"
+      }
+    ]
+  },
+  {
+    "source_name": "El Confidencial",
+    "description": "Periódico generalista español",
+    "channels": [
+      {
+        "name": "Titulares",
+        "url": "https://rss.elconfidencial.com/espana/",
+        "category": "General"
+      },
+      {
+        "name": "Sociedad",
+        "url": "https://rss.elconfidencial.com/sociedad/",
+        "category": "Society"
+      },
+      {
+        "name": "Economía",
+        "url": "https://rss.elconfidencial.com/economia/",
+        "category": "Economy, business and finance"
+      },
+      {
+        "name": "Mercados",
+        "url": "https://rss.elconfidencial.com/mercados/",
+        "category": "Economy, business and finance"
+      },
+      {
+        "name": "Móviles",
+        "url": "https://rss.elconfidencial.com/tags/otros/moviles-8601/",
+        "category": "Science and technology"
+      },
+      {
+        "name": "Apps",
+        "url": "https://rss.elconfidencial.com/tags/temas/apps-9337/",
+        "category": "Science and technology"
+      },
+      {
+        "name": "Deportes",
+        "url": "https://rss.elconfidencial.com/deportes/",
+        "category": "Sport"
+      },
+      {
+        "name": "Alimente",
+        "url": "https://rss.alimente.elconfidencial.com/",
+        "category": "Health"
+      },
+      {
+        "name": "Cultura",
+        "url": "https://rss.elconfidencial.com/cultura/",
+        "category": "Arts, culture, entertainment and media"
+      },
+      {
+        "name": "Alimentación",
+        "url": "https://rss.elconfidencial.com/tags/otros/alimentacion-5601/",
+        "category": "Health"
+      }
+    ]
+  },
+  {
+    "source_name": "El Periódico de España",
+    "description": "Periódico generalista español",
+    "channels": [
+      {
+        "name": "Crimen y Justicia",
+        "url": "https://www.epe.es/es/rss/investigacion/rss.xml",
+        "category": "Crime, law and justice"
+      },
+      {
+        "name": "Actualidad",
+        "url": "https://www.epe.es/es/rss/actualidad/rss.xml",
+        "category": "General"
+      },
+      {
+        "name": "Política",
+        "url": "https://www.epe.es/es/rss/politica/rss.xml",
+        "category": "Politics"
+      },
+      {
+        "name": "Sociedad",
+        "url": "https://www.epe.es/es/rss/sociedad/rss.xml",
+        "category": "Society"
+      },
+      {
+        "name": "Sucesos",
+        "url": "https://www.epe.es/es/rss/sucesos/rss.xml",
+        "category": "General"
+      },
+      {
+        "name": "Sanidad",
+        "url": "https://www.epe.es/es/rss/sanidad/rss.xml",
+        "category": "Health"
+      },
+      {
+        "name": "Igualdad",
+        "url": "https://www.epe.es/es/rss/igualdad/rss.xml",
+        "category": "General"
+      },
+      {
+        "name": "Cultura",
+        "url": "https://www.epe.es/es/rss/cultura/rss.xml",
+        "category": "Arts, culture, entertainment and media"
+      },
+      {
+        "name": "Ocio",
+        "url": "https://www.epe.es/es/rss/ocio/rss.xml",
+        "category": "Lifestyle and leisure"
+      },
+      {
+        "name": "Deportes",
+        "url": "https://www.epe.es/es/rss/deportes/rss.xml",
+        "category": "Sport"
+      }
+    ]
+  },{
+    "source_name": "El Confidencial Digital",
+    "description": "Periódico generalista español",
+    "channels": [
+      {
+        "name": "Religión y creencias",
+        "url": "https://www.elconfidencialdigital.com/religion/rss/",
+        "category": "Religion and belief"
+      },
+      {
+        "name": "Interes humano",
+        "url": "https://www.elconfidencialdigital.com/rss/famosos/",
+        "category": "Human interest"
+      },
+      {
+        "name": "Política",
+        "url": "https://www.elconfidencialdigital.com/rss/politica/",
+        "category": "Politics"
+      },
+      {
+        "name": "Judicial",
+        "url": "https://www.elconfidencialdigital.com/rss/judicial/",
+        "category": "Crime, law and justice"
+      },
+      {
+        "name": "Cultura",
+        "url": "https://www.elconfidencialdigital.com/rss/ideas-cooltura/",
+        "category": "Arts, culture, entertainment and media"
+      },
+      {
+        "name": "Interes humano",
+        "url": "https://www.elconfidencialdigital.com/rss/famosos/",
+        "category": "Human interest"
+      },
+      {
+        "name": "Tiempo",
+        "url": "https://www.elconfidencialdigital.com/rss/tiempo/",
+        "category": "Weather"
+      },
+      {
+        "name": "Moda",
+        "url": "https://www.elconfidencialdigital.com/rss/moda/",
+        "category": "Arts, culture, entertainment and media"
+      },
+      {
+        "name": "Tecnología",
+        "url": "https://www.elconfidencialdigital.com/rss/tecnologia/",
+        "category": "Science and Technology"
+      },
+      {
+        "name": "Negocio e inversión",
+        "url": "https://www.elconfidencialdigital.com/rss/negocio-inversion/",
+        "category": "Economy, business and finance"
+      }
+    ]
+  },
+  {
+    "source_name": "Hoy",
+    "description": "Periódico generalista español",
+    "channels": [
+      {
+        "name": "Vivir",
+        "url": "https://www.hoy.es/rss/2.0/?section=vivir",
+        "category": "Human interest"
+      },
+      {
+        "name": "Portada",
+        "url": "https://www.hoy.es/rss/2.0/portada/",
+        "category": "General"
+      },
+      {
+        "name": "Ciencia y Espacio",
+        "url": "https://www.hoy.es/rss/2.0/?section=ciencia/espacio",
+        "category": "Science and Technology"
+      },
+      {
+        "name": "Ciencia y Tierra",
+        "url": "https://www.hoy.es/rss/2.0/?section=ciencia/tierra",
+        "category": "Science and Technology"
+      },
+      {
+        "name": "Cultura",
+        "url": "https://www.hoy.es/rss/2.0/?section=culturas/cine",
+        "category": "Arts, culture, entertainment and media"
+      },
+      {
+        "name": "Música",
+        "url": "https://www.hoy.es/rss/2.0/?section=culturas/musica",
+        "category": "Arts, culture, entertainment and media"
+      },
+      {
+        "name": "Tecnología",
+        "url": "https://www.hoy.es/rss/2.0/?section=de-tiendas/tecnologia",
+        "category": "Science and Technology"
+      },
+      {
+        "name": "Estilo de vida",
+        "url": "https://www.hoy.es/rss/2.0/?section=de-tiendas/estilo-de-vida",
+        "category": "Lifestyle and leisure"
+      },
+      {
+        "name": "Deportes",
+        "url": "https://www.hoy.es/rss/2.0/?section=deportes",
+        "category": "Sport"
+      },
+      {
+        "name": "Economía",
+        "url": "https://www.hoy.es/rss/2.0/?section=economia",
+        "category": "Economy, business and finance"
+      }
+    ]
+  },
+  {
+    "source_name": "Ministerio de Defensa",
+    "description": "Ministerio de Defensa español",
+    "channels": [
+      {
+        "name": "Conflicto, guerra y paz",
+        "url": "https://www.defensa.gob.es/comun/rssChannel/rssNotasPrensa.xml",
+        "category": "Conflict, war and peace"
+      }
+    ]
+  },
+  {
+    "source_name": "Tecnoempleo",
+    "description": "Pagina de busqueda de empleo",
+    "channels": [
+      {
+        "name": "Empleo",
+        "url": "https://www.tecnoempleo.com/alertas-empleo-rss.php?pr=%2C263%2C",
+        "category": "Labour"
+      }
+    ]
+  },{
+    "source_name": "Europa Press",
+    "description": "Periódico generalista español",
+    "channels": [
+      {
+        "name": "Desastres, accidentes e incidentes de emergencia",
+        "url": "https://www.europapress.es/rss/rss.aspx?buscar=accidentes-de-trafico",
+        "category": "Disaster, accident and emergency incident"
+      },
+      {
+        "name": "Guerra",
+        "url": "https://www.europapress.es/rss/rss.aspx?buscar=guerra-ucrania-rusia",
+        "category": "Conflict, war and peace"
+      },
+      {
+        "name": "Guardia Civil",
+        "url": "https://www.europapress.es/rss/rss.aspx?buscar=guardia-civil",
+        "category": "Disaster, accident and emergency incident"
+      },
+      {
+        "name": "Irán",
+        "url": "https://www.europapress.es/rss/rss.aspx?buscar=iran",
+        "category": "Conflict, war and peace"
+      },
+      {
+        "name": "Israel",
+        "url": "https://www.europapress.es/temas/israel/",
+        "category": "Conflict, war and peace"
+      },
+      {
+        "name": "Educación",
+        "url": "https://www.europapress.es/sociedad/educacion-00468/",
+        "category": "Education"
+      },
+      {
+        "name": "Salud",
+        "url": "https://www.europapress.es/rss/rss.aspx?ch=74",
+        "category": "Health"
+      },
+      {
+        "name": "Cultura",
+        "url": "https://www.europapress.es/rss/rss.aspx?ch=126",
+        "category": "Arts, culture, entertainment and media"
+      },
+      {
+        "name": "Economía",
+        "url": "https://www.europapress.es/rss/rss.aspx?ch=136",
+        "category": "Economy, business and finance"
+      },
+      {
+        "name": "Deportes",
+        "url": "https://www.europapress.es/rss/rss.aspx?ch=67",
+        "category": "Sport"
       }
     ]
   }
