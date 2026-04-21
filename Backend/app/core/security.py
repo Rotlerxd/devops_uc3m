@@ -35,7 +35,6 @@ GMAIL_PASS = os.getenv("GMAIL_PASS")
 # bhpj ehrl napj pzgj
 
 
-
 # --- Configuración de bcrypt ---
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
