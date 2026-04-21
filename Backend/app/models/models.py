@@ -1,6 +1,7 @@
-from sqlalchemy import Boolean, Column, Integer, String, ForeignKey, Table, Float, DateTime, func
-from sqlalchemy.dialects.postgresql import JSON, ARRAY
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Table
+from sqlalchemy.dialects.postgresql import ARRAY, JSON
 from sqlalchemy.orm import relationship
+
 from app.db.database import Base
 
 # Tabla de asociación Muchos-a-Muchos para Usuarios y Roles
@@ -25,7 +26,7 @@ class User(Base):
     organization = Column(String(180), nullable=False)
     password = Column(String(128), nullable=False)
     is_verified = Column(Boolean, default=False)
-    
+
     roles = relationship("Role", secondary=user_role_table)
     alerts = relationship("Alert", back_populates="user", cascade="all, delete-orphan")
 
@@ -35,7 +36,7 @@ class Alert(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(200), nullable=False)
     cron_expression = Column(String(120), nullable=False)
-    
+
     # Arrays y JSON para adaptarnos a los Pydantic actuales sin crear tablas extra innecesarias
     descriptors = Column(ARRAY(String), default=list)
     categories = Column(JSON, default=list) # Guarda list[AlertCategoryItem]
