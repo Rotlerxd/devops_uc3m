@@ -1,4 +1,5 @@
 """Integration tests for API endpoints in main.py."""
+import random
 
 import pytest
 from fastapi.testclient import TestClient
@@ -134,7 +135,7 @@ class TestRoleEndpoints:
         if login_response.status_code != 200:
             pytest.skip("Admin user not available or password changed")
         token = login_response.json()["access_token"]
-        role_name = f"test_role_{counters['roles']}"
+        role_name = f"test_role_{random.randint(1000, 9999)}"
         response = client.post(
             "/api/v1/roles",
             json={"name": role_name},
