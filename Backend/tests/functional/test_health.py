@@ -3,7 +3,7 @@
 import pytest
 
 
-@pytest.mark.functional
+@pytest.mark.integration
 class TestHealthEndpoint:
     def test_health_returns_ok(self, client):
         response = client.get("/api/v1/health")

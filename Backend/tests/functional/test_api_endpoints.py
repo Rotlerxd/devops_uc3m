@@ -1,14 +1,12 @@
-"""Functional tests for API endpoints in main.py."""
+"""Integration tests for API endpoints in main.py."""
+
+import random
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import (
-    counters,
-)
 
-
-@pytest.mark.functional
+@pytest.mark.integration
 class TestUserEndpoints:
     def test_list_users_as_admin(self, client: TestClient):
         login_response = client.post(
@@ -111,7 +109,7 @@ class TestUserEndpoints:
         assert response.status_code == 404
 
 
-@pytest.mark.functional
+@pytest.mark.integration
 class TestRoleEndpoints:
     def test_list_roles_as_admin(self, client: TestClient):
         login_response = client.post(
@@ -138,7 +136,7 @@ class TestRoleEndpoints:
         if login_response.status_code != 200:
             pytest.skip("Admin user not available or password changed")
         token = login_response.json()["access_token"]
-        role_name = f"test_role_{counters['roles']}"
+        role_name = f"test_role_{random.randint(1000, 9999)}"
         response = client.post(
             "/api/v1/roles",
             json={"name": role_name},
@@ -190,7 +188,7 @@ class TestRoleEndpoints:
         assert response.status_code in (200, 204, 400, 409)
 
 
-@pytest.mark.functional
+@pytest.mark.integration
 class TestCategoryEndpoints:
     def test_list_categories(self, client: TestClient):
         login_response = client.post(
@@ -267,7 +265,7 @@ class TestCategoryEndpoints:
         assert response.status_code in (200, 204, 400, 409)
 
 
-@pytest.mark.functional
+@pytest.mark.integration
 class TestStatsEndpoints:
     def test_list_stats(self, client: TestClient):
         login_response = client.post(
@@ -300,7 +298,7 @@ class TestStatsEndpoints:
         assert response.status_code == 200
 
 
-@pytest.mark.functional
+@pytest.mark.integration
 class TestInformationSourceEndpoints:
     def test_list_sources(self, client: TestClient):
         login_response = client.post(
@@ -348,7 +346,7 @@ class TestInformationSourceEndpoints:
         assert response.status_code == 200
 
 
-@pytest.mark.functional
+@pytest.mark.integration
 class TestRSSChannelEndpoints:
     def test_list_channels_for_source(self, client: TestClient):
         login_response = client.post(

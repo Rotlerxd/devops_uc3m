@@ -125,6 +125,7 @@ class TestSendVerificationEmail:
 
     @unittest.mock.patch("app.core.security.smtplib.SMTP")
     @unittest.mock.patch("app.core.security.load_dotenv")
+    @unittest.mock.patch("app.core.security.GMAIL_USER", "newsradar.app.noreply@gmail.com")
     def test_email_contains_correct_recipient(self, mock_load_dotenv, mock_smtp):
         mock_server = unittest.mock.MagicMock()
         mock_smtp.return_value.__enter__.return_value = mock_server

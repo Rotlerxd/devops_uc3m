@@ -2,31 +2,47 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
+import threading
+import time
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
 import feedparser
+from dotenv import load_dotenv
 from elasticsearch import Elasticsearch
 from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field, HttpUrl
+from sqlalchemy import func
+from sqlalchemy.orm import Session
 
 from app.core.security import (
     create_verification_token,
+    get_password_hash,
     send_alert_email,
     send_verification_email,
+    verify_password,
 )
+from app.db.database import Base, SessionLocal, engine, get_db
+from app.models import models as db_models
 
 ELASTICSEARCH_URL = "http://localhost:9200"
 
+env_path = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=env_path)
+
 # 2. Instanciar el cliente global
 es_client = Elasticsearch(ELASTICSEARCH_URL)
+# Crear tablas solo si hay conexión a PostgreSQL disponible
+# (el tests necesitan importar sin DB)
+with suppress(Exception):
+    Base.metadata.create_all(bind=engine)
 
 
 def check_elastic_connection():
@@ -275,9 +291,21 @@ def next_id(counter_key: str) -> int:
     return value
 
 
-def ensure_role_ids_exist(role_ids: list[int]) -> None:
-    """Valida que todos los IDs de rol existen en memoria."""
-    missing = [role_id for role_id in role_ids if role_id not in roles_store]
+def ensure_role_ids_exist(role_ids: list[int], db: Session = Depends(get_db)) -> None:
+    """Verifica en PostgreSQL que los IDs de roles proporcionados existen."""
+    if not role_ids:
+        return
+
+    # Consultamos solo la columna 'id' de los roles que coinciden con la lista
+    existing_roles = db.query(db_models.Role.id).filter(db_models.Role.id.in_(role_ids)).all()
+
+    # existing_roles es una lista de tuplas, ej: [(1,), (2,)]
+    # Lo aplanamos en un set para que la búsqueda sea O(1)
+    existing_role_ids = {r[0] for r in existing_roles}
+
+    # Calculamos cuáles faltan exactamente como hacías en memoria
+    missing = [role_id for role_id in role_ids if role_id not in existing_role_ids]
+
     if missing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -285,109 +313,148 @@ def ensure_role_ids_exist(role_ids: list[int]) -> None:
         )
 
 
-def ensure_user_exists(user_id: int) -> None:
-    """Lanza 404 si el usuario no existe."""
-    if user_id not in users_store:
+def ensure_user_exists(user_id: int, db: Session = Depends(get_db)) -> None:
+    """Lanza 404 si el usuario no existe en la base de datos."""
+    if not db.query(db_models.User).filter(db_models.User.id == user_id).first():
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
 
-def ensure_alert_for_user(user_id: int, alert_id: int) -> Alert:
+def ensure_alert_for_user(user_id: int, alert_id: int, db: Session = Depends(get_db)):
     """Obtiene una alerta de un usuario o lanza 404 si no corresponde."""
-    alert = alerts_store.get(alert_id)
-    if not alert or alert.user_id != user_id:
+    # Opcional: puedes dejar la llamada a ensure_user_exists si quieres doble check,
+    # pero con la consulta de abajo es suficiente para proteger el endpoint.
+    db_alert = (
+        db.query(db_models.Alert).filter(db_models.Alert.id == alert_id, db_models.Alert.user_id == user_id).first()
+    )
+
+    if not db_alert:
         raise HTTPException(status_code=404, detail="Alerta no encontrada para el usuario")
-    return alert
+
+    return db_alert
 
 
-def ensure_notification_for_alert(alert_id: int, notification_id: int) -> Notification:
-    """Obtiene una notificación de una alerta o lanza 404."""
-    notification = notifications_store.get(notification_id)
-    if not notification or notification.alert_id != alert_id:
+def ensure_notification_for_alert(alert_id: int, notification_id: int, db: Session = Depends(get_db)):
+    """Obtiene una notificación de una alerta o lanza 404 buscando en PostgreSQL."""
+    db_notification = (
+        db.query(db_models.Notification)
+        .filter(db_models.Notification.id == notification_id, db_models.Notification.alert_id == alert_id)
+        .first()
+    )
+
+    if not db_notification:
         raise HTTPException(status_code=404, detail="Notificación no encontrada para la alerta")
-    return notification
+
+    return db_notification
 
 
-def ensure_information_source_exists(source_id: int) -> None:
+def ensure_information_source_exists(source_id: int, db: Session = Depends(get_db)) -> None:
     """Lanza 404 si la fuente de información no existe."""
-    if source_id not in information_sources_store:
+    if not db.query(db_models.InformationSource).filter(db_models.InformationSource.id == source_id).first():
         raise HTTPException(status_code=404, detail="Fuente de información no encontrada")
 
 
-def ensure_category_exists(category_id: int) -> None:
+def ensure_category_exists(category_id: int, db: Session = Depends(get_db)) -> None:
     """Lanza 404 si la categoría no existe."""
-    if category_id not in categories_store:
+    if not db.query(db_models.Category).filter(db_models.Category.id == category_id).first():
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
 
 
-def ensure_rss_for_source(source_id: int, channel_id: int) -> RSSChannel:
+def ensure_rss_for_source(source_id: int, channel_id: int, db: Session = Depends(get_db)) -> RSSChannel:
     """Obtiene un canal RSS de una fuente concreta o lanza 404."""
-    channel = rss_channels_store.get(channel_id)
-    if not channel or channel.information_source_id != source_id:
+    db_channel = (
+        db.query(db_models.RSSChannel)
+        .filter(db_models.RSSChannel.id == channel_id, db_models.RSSChannel.information_source_id == source_id)
+        .first()
+    )
+    if not db_channel:
         raise HTTPException(status_code=404, detail="Canal RSS no encontrado para la fuente")
-    return channel
+    return db_channel
 
 
-def sanitize_user(user: UserInDB) -> User:
-    """Devuelve la representación pública de usuario sin contraseña."""
+def sanitize_user(user_db: db_models.User, db: Session = Depends(get_db)) -> User:
+    """Convierte el modelo SQLAlchemy a tu modelo Pydantic de salida exacto."""
+    # Extraemos los IDs de la relación Muchos-a-Muchos de SQLAlchemy
+    role_ids = [role.id for role in user_db.roles] if hasattr(user_db, "roles") and user_db.roles else []
+
     return User(
-        id=user.id,
-        email=user.email,
-        first_name=user.first_name,
-        last_name=user.last_name,
-        organization=user.organization,
-        role_ids=user.role_ids,
-        is_verified=user.is_verified,  # Este campo se incluye para que el cliente sepa si el usuario está verificado o no
+        id=user_db.id,
+        email=user_db.email,
+        first_name=user_db.first_name,
+        last_name=user_db.last_name,
+        organization=user_db.organization,
+        role_ids=role_ids,
+        # Omito el password y el is_verified asumiendo que tu Pydantic 'User' base no los expone.
     )
 
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-) -> UserInDB:
-    """Autentica el token bearer y devuelve el usuario asociado."""
+    credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)
+) -> db_models.User:
+    """Autentica el token bearer y devuelve el usuario de PostgreSQL asociado."""
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Token inválido o ausente")
 
+    # 1. Validamos el token contra el diccionario en memoria
     user_id = active_tokens.get(credentials.credentials)
     if not user_id:
         raise HTTPException(status_code=401, detail="Token inválido o expirado")
 
-    user = users_store.get(user_id)
+    # 2. Extraemos el usuario real de la base de datos
+    user = db.query(db_models.User).filter(db_models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="Usuario inválido")
 
+    # Retornamos el objeto ORM. Esto es ideal porque en los endpoints
+    # podrás acceder fácilmente a sus relaciones, ej: current_user.roles
     return user
 
 
 def create_seed_data() -> None:
     """Inicializa roles, usuario admin y semilla de fuentes/canales RSS."""
-    if roles_store:
-        return
+    db = SessionLocal()
+    try:
+        # 1. Crear Roles iniciales usando db_models
+        roles_nombres = ["lector", "gestor"]
+        for nombre in roles_nombres:
+            if not db.query(db_models.Role).filter(db_models.Role.name == nombre).first():
+                db.add(db_models.Role(name=nombre))
+        db.commit()
 
-    admin_role_id = next_id("roles")
-    roles_store[admin_role_id] = Role(id=admin_role_id, name="admin")
-
-    user_role_id = next_id("roles")
-    roles_store[user_role_id] = Role(id=user_role_id, name="user")
-
-    admin_user_id = next_id("users")
-    users_store[admin_user_id] = UserInDB(
-        id=admin_user_id,
-        email="admin@newsradar.com",
-        first_name="Admin",
-        last_name="NewsRadar",
-        organization="NewsRadar",
-        role_ids=[admin_role_id],
-        password="admin123",
-        is_verified=True,
-    )
-
-    stats_store[1] = Stats(id=1, total_news=0, total_notifications=0)
+        # 2. Crear Usuario Admin
+        admin_email = "admin@newsradar.com"
+        if not db.query(db_models.User).filter(db_models.User.email == admin_email).first():
+            gestor_role = db.query(db_models.Role).filter(db_models.Role.name == "gestor").first()
+            admin_user = db_models.User(
+                email=admin_email,
+                first_name="Admin",
+                last_name="NewsRadar",
+                organization="UC3M",
+                password="admin123",
+                is_verified=True,
+                roles=[gestor_role] if gestor_role else [],
+            )
+            db.add(admin_user)
+            db.commit()
+            print("[DB] Datos iniciales creados con éxito.")
+    except Exception as e:
+        print(f"[DB] Error en el seeding: {e}")
 
     # --- 2. CARGA DE FUENTES Y CANALES RSS DESDE EL JSON ---
     base_dir = Path(__file__).resolve().parent
     seed_file = base_dir / "data" / "rss_seed.json"
 
-    if seed_file.exists():
+    if not seed_file.exists():
+        print(f"[STARTUP] Archivo JSON no encontrado en: {seed_file}")
+        return
+
+    with SessionLocal() as db:
+        # Comprobación de seguridad: si ya hay fuentes, no volvemos a inyectar la semilla
+        if db.query(db_models.InformationSource).first():
+            print("[STARTUP] La base de datos ya contiene datos. Omitiendo la carga del JSON.")
+            return
+
+        print("[STARTUP] Base de datos vacía detectada. Cargando semilla de datos...")
+
         with open(seed_file, encoding="utf-8") as f:
             data = json.load(f)
 
@@ -396,35 +463,34 @@ def create_seed_data() -> None:
             fake_url = f"https://www.{source_data['source_name'].lower().replace(' ', '')}.com"
             source_url = source_data.get("url", fake_url)
 
-            # Crear la fuente
-            source_id = next_id("information_sources")
-            source = InformationSource(id=source_id, name=source_data["source_name"], url=source_url)
-            information_sources_store[source_id] = source
+            # 1. Crear la fuente
+            source = db_models.InformationSource(name=source_data["source_name"], url=source_url)
+            db.add(source)
+            db.flush()  # Genera el source.id en la BD temporalmente sin hacer commit final
 
             # Recorrer los canales de esta fuente
             for channel_data in source_data.get("channels", []):
                 cat_name = channel_data.get("category", "General")
 
-                # Buscar si la categoría ya existe en nuestro diccionario
-                category = next((c for c in categories_store.values() if c.name == cat_name), None)
+                # 2. Buscar si la categoría ya existe en nuestra base de datos
+                category = db.query(db_models.Category).filter(db_models.Category.name == cat_name).first()
 
-                # Si no existe, la creamos y la guardamos en el diccionario
+                # Si no existe, la creamos
                 if not category:
-                    cat_id = next_id("categories")
                     # El esquema pide 'source' por defecto a "IPTC"
-                    category = Category(id=cat_id, name=cat_name, source="IPTC")
-                    categories_store[cat_id] = category
+                    category = db_models.Category(name=cat_name, source="IPTC")
+                    db.add(category)
+                    db.flush()  # Genera el category.id
 
-                # Crear el canal (Fíjate que el modelo actual no usa 'name', solo URL y Category)
-                channel_id = next_id("rss_channels")
-                channel = RSSChannel(
-                    id=channel_id, information_source_id=source_id, url=channel_data["url"], category_id=category.id
+                # 3. Crear el canal vinculándolo a la fuente y a la categoría
+                channel = db_models.RSSChannel(
+                    information_source_id=source.id, url=channel_data["url"], category_id=category.id
                 )
-                rss_channels_store[channel_id] = channel
+                db.add(channel)
 
-        print("[STARTUP] Semilla cargada: Usuarios, Fuentes, Categorías y Canales en memoria.")
-    else:
-        print(f"[STARTUP] Archivo JSON no encontrado en: {seed_file}")
+        # Confirmar todos los cambios juntos (transacción segura)
+        db.commit()
+        print("[STARTUP] Semilla cargada exitosamente en PostgreSQL: Fuentes, Categorías y Canales listos.")
 
 
 @app.on_event("startup")
@@ -432,7 +498,9 @@ def on_startup() -> None:
     """Ejecuta inicialización de datos y arranca el motor RSS."""
     create_seed_data()
     check_elastic_connection()
-    _ = asyncio.create_task(rss_fetcher_engine())
+
+    motor_thread = threading.Thread(target=rss_fetcher_engine, daemon=True)
+    motor_thread.start()
 
 
 @app.get(f"{API_PREFIX}/health", tags=["system"])
@@ -442,37 +510,60 @@ def health() -> dict:
 
 
 @app.post(f"{API_PREFIX}/auth/login", response_model=TokenResponse, tags=["auth"])
-def login(payload: LoginRequest) -> TokenResponse:
+def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
     """Autentica credenciales y emite token de sesión en memoria."""
-    user = next((u for u in users_store.values() if u.email == payload.email), None)
-    if user is None or user.password != payload.password:
+    # Búsqueda real en la base de datos
+    db_user = db.query(db_models.User).filter(db_models.User.email == payload.email).first()
+
+    # Usamos verify_password para comparar el texto plano con el hash guardado en BD
+    if db_user is None or not verify_password(payload.password, db_user.password):
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
     token = str(uuid4())
-    active_tokens[token] = user.id
+    active_tokens[token] = int(db_user.id)
     return TokenResponse(access_token=token)
 
 
 @app.post(f"{API_PREFIX}/auth/register", response_model=User, tags=["auth"])
-def register(payload: UserCreate) -> User:
+def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     """Registra un usuario nuevo y envía email de verificación."""
-    if any(user.email == payload.email for user in users_store.values()):
+    # Validación contra la tabla users
+    if db.query(db_models.User).filter(db_models.User.email == payload.email).first():
         raise HTTPException(status_code=409, detail="El email ya está registrado")
 
-    ensure_role_ids_exist(payload.role_ids)
+    # Validación de roles inyectando la sesión de BD
+    ensure_role_ids_exist(payload.role_ids, db)
 
-    user_id = next_id("users")
-    user_db = UserInDB(id=user_id, **payload.model_dump())
-    users_store[user_id] = user_db
-    # verificacion de Email
-    token = create_verification_token(user_db.email)
-    send_verification_email(user_db.email, token)
+    # Obtenemos los objetos Role de la BD para asociarlos al usuario
+    db_roles = db.query(db_models.Role).filter(db_models.Role.id.in_(payload.role_ids)).all()
 
-    return sanitize_user(user_db)
+    # Generamos el hash a partir de la contraseña que mandó el usuario
+    hashed_pwd = get_password_hash(payload.password)
+
+    # Creación del modelo ORM (inyectando el hash)
+    new_user = db_models.User(
+        email=payload.email,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        organization=payload.organization,
+        password=hashed_pwd,  # ¡Aquí guardamos el hash seguro!
+        is_verified=False,
+        roles=db_roles,
+    )
+
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    # Verificación de Email
+    token = create_verification_token(new_user.email)
+    send_verification_email(new_user.email, token)
+
+    return sanitize_user(new_user, db)
 
 
 @app.get(f"{API_PREFIX}/auth/verify", tags=["auth"])
-def verify_email(token: str):
+def verify_email(token: str, db: Session = Depends(get_db)):
     """Verifica un usuario validando el token JWT de verificación."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -489,73 +580,113 @@ def verify_email(token: str):
         print(f"[VERIFY] Error decodificando token: {e}")
         raise credentials_exception from None
 
-    # Buscamos al usuario en la BD
-    user = None
-    for u in users_store.values():
-        if u.email == email:
-            user = u
-            break
+    # 1. Buscamos al usuario en la base de datos en lugar de iterar sobre el diccionario
+    db_user = db.query(db_models.User).filter(db_models.User.email == email).first()
 
-    if user is None:
+    if db_user is None:
         print(f"[VERIFY] Usuario no encontrado para email: {email}")
         raise credentials_exception from None
 
-    if user.is_verified:
+    # 2. Comprobamos si ya estaba verificado
+    if db_user.is_verified:
         print(f"[VERIFY] Usuario ya verificado: {email}")
+        # Respetamos la estructura de retorno exacta
         return {"msg": "El usuario ya estaba verificado"}
-    usuario_actualizado = user.model_copy(update={"is_verified": True})
-    users_store[user.id] = usuario_actualizado
+
+    # 3. Actualizamos el estado y guardamos en PostgreSQL
+    db_user.is_verified = True
+    db.commit()
+
+    # Opcional pero recomendado para asegurarnos de que el objeto local tiene los datos actualizados
+    db.refresh(db_user)
+
     print(f"[VERIFY] Usuario verificado exitosamente: {email}")
-    user = users_store.get(2)
-    # print(f"[VERIFY] Usuario actualizado en store: {user.email}, is_verified={user.is_verified}")
 
     return {"msg": "Cuenta verificada con éxito. Ya puedes iniciar sesión."}
 
 
+# CRUD USERS
+
+
 @app.get(f"{API_PREFIX}/users", response_model=list[User], tags=["users"])
-def list_users(_: UserInDB = Depends(get_current_user)) -> list[User]:
+def list_users(_: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> list[User]:
     """Lista los usuarios registrados."""
-    return [sanitize_user(user) for user in users_store.values()]
+    users = db.query(db_models.User).all()
+    return [sanitize_user(user) for user in users]
 
 
 @app.post(f"{API_PREFIX}/users", response_model=User, status_code=201, tags=["users"])
-def create_user(payload: UserCreate, _: UserInDB = Depends(get_current_user)) -> User:
+def create_user(payload: UserCreate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
     """Crea un usuario desde la API protegida."""
-    if any(user.email == payload.email for user in users_store.values()):
+    # 1. Comprobar email duplicado
+    if db.query(db_models.User).filter(db_models.User.email == payload.email).first():
         raise HTTPException(status_code=409, detail="El email ya está registrado")
 
-    ensure_role_ids_exist(payload.role_ids)
-    user_id = next_id("users")
-    user_db = UserInDB(id=user_id, **payload.model_dump())
-    users_store[user_id] = user_db
-    return sanitize_user(user_db)
+    # 2. Validar y obtener roles
+    ensure_role_ids_exist(payload.role_ids, db)
+    db_roles = db.query(db_models.Role).filter(db_models.Role.id.in_(payload.role_ids)).all()
+
+    # 3. Hashear la contraseña
+    hashed_pwd = get_password_hash(payload.password)
+
+    # 4. Crear el usuario (excluimos role_ids y password plana)
+    user_data = payload.model_dump(exclude={"role_ids", "password"})
+
+    # Inyectamos el hash explícitamente (si tu columna se llama 'password', cambia la key)
+    new_user = db_models.User(**user_data, hashed_password=hashed_pwd, roles=db_roles)
+
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    return sanitize_user(new_user)
 
 
 @app.get(f"{API_PREFIX}/users/{{user_id}}", response_model=User, tags=["users"])
-def get_user(user_id: int, _: UserInDB = Depends(get_current_user)) -> User:
+def get_user(user_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
     """Obtiene un usuario por su identificador."""
-    user = users_store.get(user_id)
-    if not user:
+    db_user = db.query(db_models.User).filter(db_models.User.id == user_id).first()
+
+    if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    return sanitize_user(user)
+
+    return sanitize_user(db_user)
 
 
 @app.put(f"{API_PREFIX}/users/{{user_id}}", response_model=User, tags=["users"])
-def update_user(user_id: int, payload: UserUpdate, _: UserInDB = Depends(get_current_user)) -> User:
+def update_user(
+    user_id: int, payload: UserUpdate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
+) -> User:
     """Actualiza los campos permitidos de un usuario."""
-    user = users_store.get(user_id)
-    if not user:
+    db_user = db.query(db_models.User).filter(db_models.User.id == user_id).first()
+    if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     data = payload.model_dump(exclude_unset=True)
-    if "email" in data and any(u.email == data["email"] and u.id != user_id for u in users_store.values()):
-        raise HTTPException(status_code=409, detail="El email ya está registrado")
-    if "role_ids" in data:
-        ensure_role_ids_exist(data["role_ids"])
 
-    updated = user.model_copy(update=data)
-    users_store[user_id] = updated
-    return sanitize_user(updated)
+    # Validar email único si se está actualizando
+    if "email" in data:
+        existing_user = (
+            db.query(db_models.User).filter(db_models.User.email == data["email"], db_models.User.id != user_id).first()
+        )
+        if existing_user:
+            raise HTTPException(status_code=409, detail="El email ya está registrado")
+
+    # Validar y actualizar roles si vienen en el payload
+    if "role_ids" in data:
+        ensure_role_ids_exist(data["role_ids"], db)
+        db_roles = db.query(db_models.Role).filter(db_models.Role.id.in_(data["role_ids"])).all()
+        db_user.roles = db_roles
+        del data["role_ids"]  # Lo quitamos del dicc para no pisarlo en el bucle de abajo
+
+    # Actualizar dinámicamente el resto de campos permitidos
+    for key, value in data.items():
+        setattr(db_user, key, value)
+
+    db.commit()
+    db.refresh(db_user)
+
+    return sanitize_user(db_user)
 
 
 @app.delete(
@@ -565,54 +696,66 @@ def update_user(user_id: int, payload: UserUpdate, _: UserInDB = Depends(get_cur
     response_class=Response,
     tags=["users"],
 )
-def delete_user(user_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+def delete_user(user_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
     """Elimina un usuario y sus alertas/notificaciones asociadas."""
-    if user_id not in users_store:
+    db_user = db.query(db_models.User).filter(db_models.User.id == user_id).first()
+    if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    alert_ids = [alert.id for alert in alerts_store.values() if alert.user_id == user_id]
-    for alert_id in alert_ids:
-        notification_ids = [n.id for n in notifications_store.values() if n.alert_id == alert_id]
-        for notification_id in notification_ids:
-            notifications_store.pop(notification_id, None)
-        alerts_store.pop(alert_id, None)
+    # En bases de datos relacionales, al borrar el usuario, el ON DELETE CASCADE
+    # configurado en los modelos borra automáticamente sus alertas y notificaciones.
+    # Nos ahorramos los bucles `for` que tenías en memoria.
+    db.delete(db_user)
+    db.commit()
 
-    users_store.pop(user_id, None)
+
+# CRUD ROLES
 
 
 @app.get(f"{API_PREFIX}/roles", response_model=list[Role], tags=["roles"])
-def list_roles(_: UserInDB = Depends(get_current_user)) -> list[Role]:
+def list_roles(_: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Role]:
     """Lista todos los roles."""
-    return list(roles_store.values())
+    return db.query(db_models.Role).all()
 
 
 @app.post(f"{API_PREFIX}/roles", response_model=Role, status_code=201, tags=["roles"])
-def create_role(payload: RoleCreate, _: UserInDB = Depends(get_current_user)) -> Role:
+def create_role(payload: RoleCreate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Role:
     """Crea un rol nuevo."""
-    role_id = next_id("roles")
-    role = Role(id=role_id, **payload.model_dump())
-    roles_store[role_id] = role
-    return role
+    db_role = db_models.Role(**payload.model_dump())
+    db.add(db_role)
+    db.commit()
+    db.refresh(db_role)
+    return db_role
 
 
 @app.get(f"{API_PREFIX}/roles/{{role_id}}", response_model=Role, tags=["roles"])
-def get_role(role_id: int, _: UserInDB = Depends(get_current_user)) -> Role:
+def get_role(role_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Role:
     """Obtiene un rol por identificador."""
-    role = roles_store.get(role_id)
-    if not role:
+    db_role = db.query(db_models.Role).filter(db_models.Role.id == role_id).first()
+
+    if not db_role:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
-    return role
+
+    return db_role
 
 
 @app.put(f"{API_PREFIX}/roles/{{role_id}}", response_model=Role, tags=["roles"])
-def update_role(role_id: int, payload: RoleUpdate, _: UserInDB = Depends(get_current_user)) -> Role:
+def update_role(
+    role_id: int, payload: RoleUpdate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
+) -> Role:
     """Actualiza un rol existente."""
-    role = roles_store.get(role_id)
-    if not role:
+    db_role = db.query(db_models.Role).filter(db_models.Role.id == role_id).first()
+
+    if not db_role:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
-    updated = role.model_copy(update=payload.model_dump(exclude_unset=True))
-    roles_store[role_id] = updated
-    return updated
+
+    data = payload.model_dump(exclude_unset=True)
+    for key, value in data.items():
+        setattr(db_role, key, value)
+
+    db.commit()
+    db.refresh(db_role)
+    return db_role
 
 
 @app.delete(
@@ -622,19 +765,28 @@ def update_role(role_id: int, payload: RoleUpdate, _: UserInDB = Depends(get_cur
     response_class=Response,
     tags=["roles"],
 )
-def delete_role(role_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+def delete_role(role_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
     """Elimina un rol si no está asignado a usuarios."""
-    if role_id not in roles_store:
+    db_role = db.query(db_models.Role).filter(db_models.Role.id == role_id).first()
+
+    if not db_role:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
 
-    for user in users_store.values():
-        if role_id in user.role_ids:
-            raise HTTPException(
-                status_code=409,
-                detail="No se puede eliminar un rol asignado a usuarios",
-            )
+    # [Optimización SQL] Comprobamos si el rol está asignado usando .any() en la relación.
+    # Esto le dice a Postgres: "¿Existe algún User tal que en su lista de roles contenga este role_id?"
+    user_with_role = db.query(db_models.User).filter(db_models.User.roles.any(id=role_id)).first()
 
-    roles_store.pop(role_id, None)
+    if user_with_role:
+        raise HTTPException(
+            status_code=409,
+            detail="No se puede eliminar un rol asignado a usuarios",
+        )
+
+    db.delete(db_role)
+    db.commit()
+
+
+# CRUD user alerts
 
 
 @app.get(
@@ -642,11 +794,15 @@ def delete_role(role_id: int, _: UserInDB = Depends(get_current_user)) -> None:
     response_model=list[Alert],
     tags=["alerts"],
 )
-def list_user_alerts(user_id: int, current_user: UserInDB = Depends(get_current_user)) -> list[Alert]:
+def list_user_alerts(
+    user_id: int, current_user: db_models.User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> list[Alert]:
     """Lista las alertas asociadas a un usuario."""
-    ensure_user_exists(user_id)
+    ensure_user_exists(user_id, db)
 
-    return [alert for alert in alerts_store.values() if alert.user_id == user_id]
+    # En SQLAlchemy podemos filtrar directamente por el user_id
+    alerts = db.query(db_models.Alert).filter(db_models.Alert.user_id == user_id).all()
+    return alerts
 
 
 @app.post(
@@ -655,23 +811,34 @@ def list_user_alerts(user_id: int, current_user: UserInDB = Depends(get_current_
     status_code=201,
     tags=["alerts"],
 )
-def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB = Depends(get_current_user)) -> Alert:
+def create_user_alert(
+    user_id: int,
+    payload: AlertCreate,
+    current_user: db_models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Alert:
     """Crea una alerta para el usuario autenticado validando reglas de negocio."""
-    ensure_user_exists(user_id)
+    ensure_user_exists(user_id, db)
 
     # Validar que el usuario que crea la alerta es el mismo que está logueado
     if current_user.id != user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permisos para crear alertas para otro usuario."
         )
-    nombres_roles = [roles_store[rol_id].name.lower() for rol_id in current_user.role_ids if rol_id in roles_store]
-    if "user" in nombres_roles and "admin" not in nombres_roles:
+
+    # Extraemos los nombres de los roles del current_user (ahora es un objeto SQLAlchemy)
+    nombres_roles = [rol.name.lower() for rol in current_user.roles]
+
+    # Adaptado a los roles "lector" y "gestor" de tu BD real
+    if "lector" in nombres_roles and "gestor" not in nombres_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Los lectores no tienen permisos para crear ni gestionar alertas.",
         )
+
     # Validar regla: Límite máximo de 20 alertas por usuario
-    user_alerts_count = sum(1 for a in alerts_store.values() if a.user_id == user_id)
+    # En SQL usamos .count() en lugar de traer todos los registros a memoria para contarlos
+    user_alerts_count = db.query(db_models.Alert).filter(db_models.Alert.user_id == user_id).count()
     if user_alerts_count >= 20:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Límite máximo de 20 alertas alcanzado.")
 
@@ -682,10 +849,13 @@ def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB
             detail="La alerta debe tener entre 3 y 10 descriptores (sinónimos).",
         )
 
-    alert_id = next_id("alerts")
-    alert = Alert(id=alert_id, user_id=user_id, **payload.model_dump())
-    alerts_store[alert_id] = alert
-    return alert
+    # Crear la alerta en PostgreSQL
+    db_alert = db_models.Alert(user_id=user_id, **payload.model_dump())
+    db.add(db_alert)
+    db.commit()
+    db.refresh(db_alert)
+
+    return db_alert
 
 
 @app.get(
@@ -693,15 +863,18 @@ def create_user_alert(user_id: int, payload: AlertCreate, current_user: UserInDB
     response_model=Alert,
     tags=["alerts"],
 )
-def get_user_alert(user_id: int, alert_id: int, current_user: UserInDB = Depends(get_current_user)) -> Alert:
+def get_user_alert(
+    user_id: int, alert_id: int, current_user: db_models.User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> Alert:
     """Obtiene una alerta concreta de un usuario."""
-    nombres_roles = [roles_store[rol_id].name.lower() for rol_id in current_user.role_ids if rol_id in roles_store]
-    if "user" in nombres_roles and "admin" not in nombres_roles:
+    nombres_roles = [rol.name.lower() for rol in current_user.roles]
+    if "lector" in nombres_roles and "gestor" not in nombres_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Los lectores no tienen permisos para crear ni gestionar alertas.",
         )
-    return ensure_alert_for_user(user_id, alert_id)
+
+    return ensure_alert_for_user(user_id, alert_id, db)
 
 
 @app.put(
@@ -713,20 +886,34 @@ def update_user_alert(
     user_id: int,
     alert_id: int,
     payload: AlertUpdate,
-    current_user: UserInDB = Depends(get_current_user),
+    current_user: db_models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> Alert:
     """Actualiza una alerta de usuario."""
-    nombres_roles = [roles_store[rol_id].name.lower() for rol_id in current_user.role_ids if rol_id in roles_store]
-
-    if "user" in nombres_roles and "admin" not in nombres_roles:
+    nombres_roles = [rol.name.lower() for rol in current_user.roles]
+    if "lector" in nombres_roles and "gestor" not in nombres_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Los lectores no tienen permisos para crear ni gestionar alertas.",
         )
-    alert = ensure_alert_for_user(user_id, alert_id)
-    updated = alert.model_copy(update=payload.model_dump(exclude_unset=True))
-    alerts_store[alert_id] = updated
-    return updated
+
+    db_alert = ensure_alert_for_user(user_id, alert_id, db)
+
+    # Validar regla: Entre 3 y 10 descriptores si se están actualizando
+
+    if (payload.descriptors is not None) and (len(payload.descriptors) < 3 or len(payload.descriptors) > 10):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La alerta debe tener entre 3 y 10 descriptores (sinónimos).",
+        )
+
+    update_data = payload.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_alert, key, value)
+
+    db.commit()
+    db.refresh(db_alert)
+    return db_alert
 
 
 @app.delete(
@@ -736,19 +923,26 @@ def update_user_alert(
     response_class=Response,
     tags=["alerts"],
 )
-def delete_user_alert(user_id: int, alert_id: int, current_user: UserInDB = Depends(get_current_user)) -> None:
+def delete_user_alert(
+    user_id: int, alert_id: int, current_user: db_models.User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> None:
     """Elimina una alerta y sus notificaciones relacionadas."""
-    ensure_alert_for_user(user_id, alert_id)
-    nombres_roles = [roles_store[rol_id].name.lower() for rol_id in current_user.role_ids if rol_id in roles_store]
-    if "user" in nombres_roles and "admin" not in nombres_roles:
+    db_alert = ensure_alert_for_user(user_id, alert_id, db)
+
+    nombres_roles = [rol.name.lower() for rol in current_user.roles]
+    if "lector" in nombres_roles and "gestor" not in nombres_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Los lectores no tienen permisos para crear ni gestionar alertas.",
         )
-    notification_ids = [n.id for n in notifications_store.values() if n.alert_id == alert_id]
-    for notification_id in notification_ids:
-        notifications_store.pop(notification_id, None)
-    alerts_store.pop(alert_id, None)
+
+    # Gracias a SQLAlchemy y el "CASCADE" de la BD, borrar la alerta aquí
+    # eliminará automáticamente todas las notificaciones asociadas.
+    db.delete(db_alert)
+    db.commit()
+
+
+# CRUD alert notifications
 
 
 @app.get(
@@ -759,11 +953,15 @@ def delete_user_alert(user_id: int, alert_id: int, current_user: UserInDB = Depe
 def list_alert_notifications(
     user_id: int,
     alert_id: int,
-    current_user: UserInDB = Depends(get_current_user),
+    current_user: db_models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> list[Notification]:
     """Lista notificaciones de una alerta."""
-    ensure_alert_for_user(user_id, alert_id)
-    return [item for item in notifications_store.values() if item.alert_id == alert_id]
+    # Verificamos que la alerta existe y es del usuario
+    ensure_alert_for_user(user_id, alert_id, db)
+
+    # Consultamos las notificaciones en PostgreSQL
+    return db.query(db_models.Notification).filter(db_models.Notification.alert_id == alert_id).all()
 
 
 @app.post(
@@ -777,13 +975,19 @@ def create_alert_notification(
     alert_id: int,
     payload: NotificationCreate,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> Notification:
     """Crea una notificación para una alerta concreta."""
-    ensure_alert_for_user(user_id, alert_id)
-    notification_id = next_id("notifications")
-    notification = Notification(id=notification_id, alert_id=alert_id, **payload.model_dump())
-    notifications_store[notification_id] = notification
-    return notification
+    ensure_alert_for_user(user_id, alert_id, db)
+
+    # Creamos la entidad en la base de datos (Postgres genera el ID automáticamente)
+    db_notification = db_models.Notification(alert_id=alert_id, **payload.model_dump())
+
+    db.add(db_notification)
+    db.commit()
+    db.refresh(db_notification)
+
+    return db_notification
 
 
 @app.get(
@@ -796,10 +1000,12 @@ def get_alert_notification(
     alert_id: int,
     notification_id: int,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> Notification:
     """Obtiene una notificación concreta de una alerta."""
-    ensure_alert_for_user(user_id, alert_id)
-    return ensure_notification_for_alert(alert_id, notification_id)
+    """Obtiene una notificación concreta de una alerta."""
+    ensure_alert_for_user(user_id, alert_id, db)
+    return ensure_notification_for_alert(alert_id, notification_id, db)
 
 
 @app.put(
@@ -813,13 +1019,21 @@ def update_alert_notification(
     notification_id: int,
     payload: NotificationUpdate,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> Notification:
     """Actualiza una notificación de alerta."""
-    ensure_alert_for_user(user_id, alert_id)
-    notification = ensure_notification_for_alert(alert_id, notification_id)
-    updated = notification.model_copy(update=payload.model_dump(exclude_unset=True))
-    notifications_store[notification_id] = updated
-    return updated
+    ensure_alert_for_user(user_id, alert_id, db)
+    db_notification = ensure_notification_for_alert(alert_id, notification_id, db)
+
+    # Actualizamos los campos que vengan en el payload
+    update_data = payload.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_notification, key, value)
+
+    db.commit()
+    db.refresh(db_notification)
+
+    return db_notification
 
 
 @app.delete(
@@ -834,46 +1048,55 @@ def delete_alert_notification(
     alert_id: int,
     notification_id: int,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> None:
     """Elimina una notificación de alerta."""
-    ensure_alert_for_user(user_id, alert_id)
-    ensure_notification_for_alert(alert_id, notification_id)
-    notifications_store.pop(notification_id, None)
+    ensure_alert_for_user(user_id, alert_id, db)
+    db_notification = ensure_notification_for_alert(alert_id, notification_id, db)
+
+    db.delete(db_notification)
+    db.commit()
+
+
+# CRUD categorias
 
 
 @app.get(f"{API_PREFIX}/categories", response_model=list[Category], tags=["categories"])
-def list_categories(_: UserInDB = Depends(get_current_user)) -> list[Category]:
+def list_categories(_: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Category]:
     """Lista categorías configuradas."""
-    return list(categories_store.values())
+    return db.query(db_models.Category).all()
 
 
 @app.post(f"{API_PREFIX}/categories", response_model=Category, status_code=201, tags=["categories"])
-def create_category(payload: CategoryCreate, _: UserInDB = Depends(get_current_user)) -> Category:
+def create_category(
+    payload: CategoryCreate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
+) -> Category:
     """Crea una nueva categoría."""
-    category_id = next_id("categories")
-    category = Category(id=category_id, **payload.model_dump())
-    categories_store[category_id] = category
-    return category
+    db_category = db_models.Category(**payload.model_dump())
+    db.add(db_category)
+    db.commit()
+    db.refresh(db_category)
+    return db_category
 
 
 @app.get(f"{API_PREFIX}/categories/{{category_id}}", response_model=Category, tags=["categories"])
-def get_category(category_id: int, _: UserInDB = Depends(get_current_user)) -> Category:
+def get_category(category_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Category:
     """Obtiene una categoría por identificador."""
-    category = categories_store.get(category_id)
-    if not category:
+    db_category = db.query(db_models.Category).filter(db_models.Category.id == category_id).first()
+    if not db_category:
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
-    return category
+    return db_category
 
 
 @app.put(f"{API_PREFIX}/categories/{{category_id}}", response_model=Category, tags=["categories"])
-def update_category(category_id: int, payload: CategoryUpdate, _: UserInDB = Depends(get_current_user)) -> Category:
+def update_category(
+    category_id: int, payload: CategoryUpdate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
+) -> Category:
     """Actualiza una categoría existente."""
-    category = categories_store.get(category_id)
-    if not category:
+    db_category = db.query(db_models.Category).filter(db_models.Category.id == category_id).first()
+    if not db_category:
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
-    updated = category.model_copy(update=payload.model_dump(exclude_unset=True))
-    categories_store[category_id] = updated
-    return updated
+    return db_category
 
 
 @app.delete(
@@ -883,26 +1106,34 @@ def update_category(category_id: int, payload: CategoryUpdate, _: UserInDB = Dep
     response_class=Response,
     tags=["categories"],
 )
-def delete_category(category_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+def delete_category(category_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
     """Elimina una categoría si no está asociada a canales RSS."""
-    if category_id not in categories_store:
+    db_category = db.query(db_models.Category).filter(db_models.Category.id == category_id).first()
+    if not db_category:
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
 
-    for channel in rss_channels_store.values():
-        if channel.category_id == category_id:
-            raise HTTPException(status_code=409, detail="Categoría asociada a canales RSS")
+    # Comprobamos si hay algún canal RSS asociado a esta categoría
+    # (Ajusta 'db_models.RSSChannel' si tu modelo se llama de otra forma)
+    associated_channel = db.query(db_models.RSSChannel).filter(db_models.RSSChannel.category_id == category_id).first()
 
-    categories_store.pop(category_id, None)
+    if associated_channel:
+        raise HTTPException(status_code=409, detail="Categoría asociada a canales RSS")
+
+    db.delete(db_category)
+    db.commit()
 
 
+# CRUD information sources
 @app.get(
     f"{API_PREFIX}/information-sources",
     response_model=list[InformationSource],
     tags=["information-sources"],
 )
-def list_information_sources(_: UserInDB = Depends(get_current_user)) -> list[InformationSource]:
+def list_information_sources(
+    _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
+) -> list[InformationSource]:
     """Lista fuentes de información."""
-    return list(information_sources_store.values())
+    return db.query(db_models.InformationSource).all()
 
 
 @app.post(
@@ -914,12 +1145,16 @@ def list_information_sources(_: UserInDB = Depends(get_current_user)) -> list[In
 def create_information_source(
     payload: InformationSourceCreate,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> InformationSource:
     """Crea una fuente de información."""
-    source_id = next_id("information_sources")
-    source = InformationSource(id=source_id, **payload.model_dump())
-    information_sources_store[source_id] = source
-    return source
+    db_source = db_models.InformationSource(**payload.model_dump())
+
+    db.add(db_source)
+    db.commit()
+    db.refresh(db_source)
+
+    return db_source
 
 
 @app.get(
@@ -927,12 +1162,16 @@ def create_information_source(
     response_model=InformationSource,
     tags=["information-sources"],
 )
-def get_information_source(source_id: int, _: UserInDB = Depends(get_current_user)) -> InformationSource:
+def get_information_source(
+    source_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
+) -> InformationSource:
     """Obtiene una fuente de información por identificador."""
-    source = information_sources_store.get(source_id)
-    if not source:
+    db_source = db.query(db_models.InformationSource).filter(db_models.InformationSource.id == source_id).first()
+
+    if not db_source:
         raise HTTPException(status_code=404, detail="Fuente de información no encontrada")
-    return source
+
+    return db_source
 
 
 @app.put(
@@ -944,14 +1183,22 @@ def update_information_source(
     source_id: int,
     payload: InformationSourceUpdate,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> InformationSource:
     """Actualiza una fuente de información existente."""
-    source = information_sources_store.get(source_id)
-    if not source:
+    db_source = db.query(db_models.InformationSource).filter(db_models.InformationSource.id == source_id).first()
+
+    if not db_source:
         raise HTTPException(status_code=404, detail="Fuente de información no encontrada")
-    updated = source.model_copy(update=payload.model_dump(exclude_unset=True))
-    information_sources_store[source_id] = updated
-    return updated
+
+    update_data = payload.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_source, key, value)
+
+    db.commit()
+    db.refresh(db_source)
+
+    return db_source
 
 
 @app.delete(
@@ -961,16 +1208,22 @@ def update_information_source(
     response_class=Response,
     tags=["information-sources"],
 )
-def delete_information_source(source_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+def delete_information_source(
+    source_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
+) -> None:
     """Elimina una fuente y sus canales RSS asociados."""
-    if source_id not in information_sources_store:
+    db_source = db.query(db_models.InformationSource).filter(db_models.InformationSource.id == source_id).first()
+
+    if not db_source:
         raise HTTPException(status_code=404, detail="Fuente de información no encontrada")
 
-    channel_ids = [channel.id for channel in rss_channels_store.values() if channel.information_source_id == source_id]
-    for channel_id in channel_ids:
-        rss_channels_store.pop(channel_id, None)
+    # Al borrar el objeto de la base de datos, PostgreSQL ejecutará un ON DELETE CASCADE
+    # para eliminar automáticamente los registros dependientes en la tabla de canales RSS.
+    db.delete(db_source)
+    db.commit()
 
-    information_sources_store.pop(source_id, None)
+
+# CRUD source channels
 
 
 @app.get(
@@ -978,10 +1231,12 @@ def delete_information_source(source_id: int, _: UserInDB = Depends(get_current_
     response_model=list[RSSChannel],
     tags=["rss-channels"],
 )
-def list_source_channels(source_id: int, _: UserInDB = Depends(get_current_user)) -> list[RSSChannel]:
+def list_source_channels(
+    source_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
+) -> list[RSSChannel]:
     """Lista canales RSS de una fuente."""
-    ensure_information_source_exists(source_id)
-    return [channel for channel in rss_channels_store.values() if channel.information_source_id == source_id]
+    ensure_information_source_exists(source_id, db)
+    return db.query(db_models.RSSChannel).filter(db_models.RSSChannel.information_source_id == source_id).all()
 
 
 @app.post(
@@ -994,19 +1249,20 @@ def create_source_channel(
     source_id: int,
     payload: RSSChannelCreate,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> RSSChannel:
     """Crea un canal RSS para una fuente de información."""
-    ensure_information_source_exists(source_id)
-    ensure_category_exists(payload.category_id)
+    ensure_information_source_exists(source_id, db)
+    ensure_category_exists(payload.category_id, db)
 
-    channel_id = next_id("rss_channels")
-    channel = RSSChannel(
-        id=channel_id,
+    db_channel = db_models.RSSChannel(
         information_source_id=source_id,
         **payload.model_dump(),
     )
-    rss_channels_store[channel_id] = channel
-    return channel
+    db.add(db_channel)
+    db.commit()
+    db.refresh(db_channel)
+    return db_channel
 
 
 @app.get(
@@ -1018,10 +1274,11 @@ def get_source_channel(
     source_id: int,
     channel_id: int,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> RSSChannel:
     """Obtiene un canal RSS concreto de una fuente."""
-    ensure_information_source_exists(source_id)
-    return ensure_rss_for_source(source_id, channel_id)
+    ensure_information_source_exists(source_id, db)
+    return ensure_rss_for_source(source_id, channel_id, db)
 
 
 @app.put(
@@ -1034,18 +1291,22 @@ def update_source_channel(
     channel_id: int,
     payload: RSSChannelUpdate,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> RSSChannel:
     """Actualiza un canal RSS existente."""
-    ensure_information_source_exists(source_id)
-    channel = ensure_rss_for_source(source_id, channel_id)
+    ensure_information_source_exists(source_id, db)
+    db_channel = ensure_rss_for_source(source_id, channel_id, db)
 
     update_data = payload.model_dump(exclude_unset=True)
     if "category_id" in update_data:
-        ensure_category_exists(update_data["category_id"])
+        ensure_category_exists(update_data["category_id"], db)
 
-    updated = channel.model_copy(update=update_data)
-    rss_channels_store[channel_id] = updated
-    return updated
+    for key, value in update_data.items():
+        setattr(db_channel, key, value)
+
+    db.commit()
+    db.refresh(db_channel)
+    return db_channel
 
 
 @app.delete(
@@ -1059,47 +1320,60 @@ def delete_source_channel(
     source_id: int,
     channel_id: int,
     _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> None:
     """Elimina un canal RSS de una fuente."""
-    ensure_information_source_exists(source_id)
-    ensure_rss_for_source(source_id, channel_id)
-    rss_channels_store.pop(channel_id, None)
+    ensure_information_source_exists(source_id, db)
+    db_channel = ensure_rss_for_source(source_id, channel_id, db)
+
+    db.delete(db_channel)
+    db.commit()
+
+
+# CRUD stats
 
 
 @app.get(f"{API_PREFIX}/stats", response_model=list[Stats], tags=["stats"])
-def list_stats(_: UserInDB = Depends(get_current_user)) -> list[Stats]:
+def list_stats(_: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Stats]:
     """Lista entradas de estadísticas globales."""
-    return list(stats_store.values())
+    return db.query(db_models.Stats).all()
 
 
 @app.post(f"{API_PREFIX}/stats", response_model=Stats, status_code=201, tags=["stats"])
-def create_stats(payload: StatsCreate, _: UserInDB = Depends(get_current_user)) -> Stats:
+def create_stats(payload: StatsCreate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Stats:
     """Crea una entrada de estadísticas."""
-    stats_id = next_id("stats")
-    stats = Stats(id=stats_id, **payload.model_dump())
-    stats_store[stats_id] = stats
-    return stats
+    db_stats = db_models.Stats(**payload.model_dump())
+    db.add(db_stats)
+    db.commit()
+    db.refresh(db_stats)
+    return db_stats
 
 
 @app.get(f"{API_PREFIX}/stats/{{stats_id}}", response_model=Stats, tags=["stats"])
-def get_stats(stats_id: int, _: UserInDB = Depends(get_current_user)) -> Stats:
+def get_stats(stats_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Stats:
     """Obtiene estadísticas por identificador."""
-    stats = stats_store.get(stats_id)
-    if not stats:
+    db_stats = db.query(db_models.Stats).filter(db_models.Stats.id == stats_id).first()
+    if not db_stats:
         raise HTTPException(status_code=404, detail="Stats no encontrados")
-    return stats
+    return db_stats
 
 
 @app.put(f"{API_PREFIX}/stats/{{stats_id}}", response_model=Stats, tags=["stats"])
-def update_stats(stats_id: int, payload: StatsUpdate, _: UserInDB = Depends(get_current_user)) -> Stats:
+def update_stats(
+    stats_id: int, payload: StatsUpdate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
+) -> Stats:
     """Actualiza una entrada de estadísticas."""
-    stats = stats_store.get(stats_id)
-    if not stats:
+    db_stats = db.query(db_models.Stats).filter(db_models.Stats.id == stats_id).first()
+    if not db_stats:
         raise HTTPException(status_code=404, detail="Stats no encontrados")
 
-    updated = stats.model_copy(update=payload.model_dump(exclude_unset=True))
-    stats_store[stats_id] = updated
-    return updated
+    update_data = payload.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_stats, key, value)
+
+    db.commit()
+    db.refresh(db_stats)
+    return db_stats
 
 
 @app.delete(
@@ -1109,130 +1383,229 @@ def update_stats(stats_id: int, payload: StatsUpdate, _: UserInDB = Depends(get_
     response_class=Response,
     tags=["stats"],
 )
-def delete_stats(stats_id: int, _: UserInDB = Depends(get_current_user)) -> None:
+def delete_stats(stats_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
     """Elimina una entrada de estadísticas."""
-    if stats_id not in stats_store:
+    db_stats = db.query(db_models.Stats).filter(db_models.Stats.id == stats_id).first()
+    if not db_stats:
         raise HTTPException(status_code=404, detail="Stats no encontrados")
-    stats_store.pop(stats_id, None)
+
+    db.delete(db_stats)
+    db.commit()
 
 
-async def rss_fetcher_engine():
+def update_global_stats(db: Session) -> db_models.Stats:
+    """
+    Calcula las estadísticas globales consultando la BD.
+    Usa el registro con ID=1 como caché global.
+    """
+    # 1. Contamos las filas de las tablas que sí tienes en PostgreSQL
+    t_notifications = db.query(func.count(db_models.Notification.id)).scalar() or 0
+    t_users = db.query(func.count(db_models.User.id)).scalar() or 0
+    t_alerts = db.query(func.count(db_models.Alert.id)).scalar() or 0
+    t_sources = db.query(func.count(db_models.InformationSource.id)).scalar() or 0
+    t_channels = db.query(func.count(db_models.RSSChannel.id)).scalar() or 0
+
+    # 2. Estructuramos el JSON de 'metrics' como una lista de diccionarios
+    # para respetar tu modelo (default=list)
+    current_metrics = [
+        {"metric_name": "total_users", "value": t_users},
+        {"metric_name": "total_alerts", "value": t_alerts},
+        {"metric_name": "total_information_sources", "value": t_sources},
+        {"metric_name": "total_rss_channels", "value": t_channels},
+    ]
+
+    # 3. Buscamos el registro global (asumimos que el ID 1 es nuestro "dashboard")
+    db_stats = db.query(db_models.Stats).filter(db_models.Stats.id == 1).first()
+
+    if not db_stats:
+        # Si la tabla está vacía, creamos el registro base
+        db_stats = db_models.Stats(id=1, total_news=0)
+        db.add(db_stats)
+
+    # 4. Actualizamos los campos
+    db_stats.total_notifications = t_notifications
+    db_stats.metrics = current_metrics
+    # Nota: total_news no lo tocamos aquí porque ese dato se traerá de Elasticsearch
+
+    # 5. Guardamos en base de datos
+    db.commit()
+    db.refresh(db_stats)
+
+    return db_stats
+
+
+def rss_fetcher_engine():
     """Ejecuta en bucle la captura RSS, indexación y generación de notificaciones."""
     # Esperamos un poco antes de arrancar la primera vez para dar tiempo a que cargue la semilla
-    await asyncio.sleep(5)
+    time.sleep(5)
 
     while True:
         print("[MOTOR RSS] Iniciando ciclo de extracción...")
 
-        # Iteramos sobre todos los canales guardados en memoria
-        for channel_id, channel in rss_channels_store.items():
-            try:
-                # Descargamos y parseamos el XML
-                feed = feedparser.parse(str(channel.url))
+        # ABRIMOS SESIÓN DE BASE DE DATOS PARA ESTE CICLO
+        with SessionLocal() as db:
+            # 1. Recuperamos estadísticas globales (creamos una si no existe)
+            db_stats = db.query(db_models.Stats).first()
+            if not db_stats:
+                db_stats = db_models.Stats(total_news=0, total_notifications=0)
+                db.add(db_stats)
+                db.commit()
 
-                nuevas_noticias = 0
-                for entry in feed.entries:
-                    # Preparamos el documento
-                    doc = {
-                        "title": entry.get("title", ""),
-                        "link": entry.get("link", ""),
-                        "summary": entry.get("summary", ""),
-                        "published_at": entry.get("published", datetime.now(UTC).isoformat()),
-                        "channel_id": channel_id,
-                        "category_id": channel.category_id,
-                    }
+            # --- PARTE 1: EXTRACCIÓN RSS ---
+            # Iteramos sobre todos los canales guardados en la BD
+            canales = db.query(db_models.RSSChannel).all()
+            for channel in canales:
+                try:
+                    # Descargamos y parseamos el XML
+                    feed = feedparser.parse(str(channel.url))
 
-                    # Lo mandamos a Elasticsearch (al índice 'newsradar_articles')
-                    # Usamos el link como ID en Elastic para evitar duplicados si la noticia ya se bajó
-                    es_client.index(index="newsradar_articles", id=doc["link"], document=doc)
-                    nuevas_noticias += 1
+                    nuevas_noticias = 0
+                    for entry in feed.entries:
+                        # Preparamos el documento
+                        doc = {
+                            "title": entry.get("title", ""),
+                            "link": entry.get("link", ""),
+                            "summary": entry.get("summary", ""),
+                            "published_at": entry.get("published", datetime.now(UTC).isoformat()),
+                            "channel_id": channel.id,
+                            "category_id": channel.category_id,
+                        }
 
-                if nuevas_noticias > 0:
-                    print(f"[MOTOR RSS] {nuevas_noticias} noticias indexadas de: {channel.url}")
-                    stats_store[1].total_news += nuevas_noticias
+                        # Lo mandamos a Elasticsearch (al índice 'newsradar_articles')
+                        # Usamos el link como ID en Elastic para evitar duplicados si la noticia ya se bajó
+                        es_client.index(index="newsradar_articles", id=doc["link"], document=doc)
+                        nuevas_noticias += 1
 
-            except Exception as e:
-                print(f"[MOTOR RSS] Error procesando canal {channel.url}: {e}")
+                    if nuevas_noticias > 0:
+                        print(f"[MOTOR RSS] {nuevas_noticias} noticias indexadas de: {channel.url}")
+                        db_stats.total_news += nuevas_noticias
 
-        print("[EL RADAR] Cruzando alertas con las nuevas noticias...")
+                except Exception as e:
+                    print(f"[MOTOR RSS] Error procesando canal {channel.url}: {e}")
 
-        # Iteramos sobre todas las alertas que han creado los usuarios
-        for alert_id, alert in alerts_store.items():
-            if not alert.descriptors:
-                continue
+            print("[EL RADAR] Cruzando alertas con las nuevas noticias...")
 
-            # 1. Construimos la consulta para Elasticsearch
-            # Buscamos en 'title' y 'summary' cualquier coincidencia con los descriptores
-            clausulas_busqueda = [
-                {"multi_match": {"query": desc, "fields": ["title", "summary"]}} for desc in alert.descriptors
-            ]
+            # --- PARTE 2: CRUZAR ALERTAS ---
+            # Iteramos sobre todas las alertas que han creado los usuarios
+            alertas = db.query(db_models.Alert).all()
+            for alert in alertas:
+                if not alert.descriptors:
+                    continue
 
-            consulta = {
-                "query": {
-                    "bool": {
-                        "should": clausulas_busqueda,
-                        "minimum_should_match": 1,  # Al menos 1 descriptor debe coincidir
-                        "filter": {
-                            "range": {
-                                # Importante: Solo miramos noticias de los últimos 15 min
-                                # para no notificar lo mismo una y otra vez
-                                "published_at": {"gte": "now-15m"}
-                            }
-                        },
+                # 1. Construimos la consulta para Elasticsearch
+                # Buscamos en 'title' y 'summary' cualquier coincidencia con los descriptores
+                clausulas_busqueda = [
+                    {"multi_match": {"query": desc, "fields": ["title", "summary"]}} for desc in alert.descriptors
+                ]
+
+                # Filtros obligatorios base (siempre miramos los últimos 15 min)
+                filtros = [{"range": {"published_at": {"gte": "now-15m"}}}]
+                # Si el usuario especificó categorías, obligamos a Elasticsearch a buscar SOLO en ellas
+
+                if alert.categories:
+                    try:
+                        # 1. Extraemos los nombres de las categorías con cuidado
+                        nombres_categorias = []
+                        for cat in alert.categories:
+                            if isinstance(cat, dict):  # Si viene como JSON dict de la BD
+                                nombres_categorias.append(cat.get("label"))
+                            else:  # Si viene como un objeto Pydantic/SQLAlchemy
+                                nombres_categorias.append(getattr(cat, "label", getattr(cat, "name", "")))
+
+                        # Limpiamos posibles nulos o vacíos
+                        nombres_categorias = [n for n in nombres_categorias if n]
+
+                        # 2. Buscamos en PostgreSQL qué IDs numéricos corresponden a esos nombres
+                        categorias_db = (
+                            db.query(db_models.Category).filter(db_models.Category.name.in_(nombres_categorias)).all()
+                        )
+                        ids_categorias = [c.id for c in categorias_db]
+
+                        # CHIVATO: Te mostrará en la terminal qué está pasando realmente
+                        print(
+                            f"[DEBUG] Alerta '{alert.name}' busca: {nombres_categorias}. IDs encontrados en BD: {ids_categorias}"
+                        )
+
+                        # 3. Aplicamos el filtro estricto
+                        if ids_categorias:
+                            filtros.append({"terms": {"category_id": ids_categorias}})
+                        else:
+                            # FALLO SILENCIOSO EVITADO: Si no encuentra las categorías, le pasamos un ID imposible
+                            # para que no devuelva todas las noticias de la base de datos.
+                            print(
+                                f"[WARNING] Las categorías {nombres_categorias} no coinciden con ninguna de la base de datos."
+                            )
+                            filtros.append({"terms": {"category_id": [-1]}})
+
+                    except Exception as e:
+                        print(f"[RADAR] Error procesando categorías para la alerta '{alert.name}': {e}")
+                        filtros.append({"terms": {"category_id": [-1]}})  # Bloqueo de seguridad en caso de error
+
+                consulta = {
+                    "query": {
+                        "bool": {
+                            "should": clausulas_busqueda,
+                            "minimum_should_match": 1,  # Al menos 1 descriptor debe coincidir
+                            "filter": filtros,  # Aplicamos la lista de filtros obligatorios
+                        }
                     }
                 }
-            }
 
-            try:
-                # 2. Disparamos la búsqueda en el índice
-                resultados = es_client.search(index="newsradar_articles", body=consulta)
+                try:
+                    # 2. Disparamos la búsqueda en el índice
+                    resultados = es_client.search(index="newsradar_articles", body=consulta)
 
-                # Elasticsearch devuelve el total de coincidencias en esta ruta
-                total_hits = resultados["hits"]["total"]["value"]
-                noticias_encontradas = resultados["hits"]["hits"]
+                    # Elasticsearch devuelve el total de coincidencias en esta ruta
+                    total_hits = resultados["hits"]["total"]["value"]
+                    noticias_encontradas = resultados["hits"]["hits"]
 
-                # 3. Si hay coincidencias, creamos la notificación
-                if total_hits > 0:
-                    print(f"[ALERTA DISPARADA] '{alert.name}' (User {alert.user_id}): {total_hits} coincidencias.")
-                    lista_noticias = []
-                    if alert.categories:
-                        # Si son diccionarios, sacamos el 'label' (ej: "Tecnología")
-                        # Si prefieres el código (ej: "TECH"), cambia cat.get('label') por cat.get('code')
-                        try:
-                            # Asumiendo que es un diccionario
-                            # categoria_clasificada = ", ".join([cat.get('label', '') for cat in alert.categories])
-                            if alert.categories:
-                                categoria_clasificada = ", ".join([cat.label for cat in alert.categories])
-                            else:
+                    # 3. Si hay coincidencias, creamos la notificación
+                    if total_hits > 0:
+                        print(f"[ALERTA DISPARADA] '{alert.name}' (User {alert.user_id}): {total_hits} coincidencias.")
+                        lista_noticias = []
+
+                        # Extraer categoría para la notificación
+                        # Dependiendo de cómo guardes categories en SQLAlchemy (JSON o relación), extraemos el label
+                        if alert.categories:
+                            try:
+                                # Si lo tienes como una lista de strings/dicts en un JSON
+                                categoria_clasificada = ", ".join(
+                                    [cat if isinstance(cat, str) else cat.get("label", "") for cat in alert.categories]
+                                )
+                            except Exception:
                                 categoria_clasificada = "General"
-                        except AttributeError:
-                            # Por si resulta ser un objeto Pydantic y no un diccionario
-                            categoria_clasificada = ", ".join([cat.label for cat in alert.categories])
-                    else:
-                        categoria_clasificada = "General"
+                        else:
+                            categoria_clasificada = "General"
 
-                    for noticia in noticias_encontradas:
-                        datos_rss = noticia["_source"]  # Aquí dentro están el título, resumen, etc.
-                        lista_noticias.append(datos_rss)
-                        notif_id = next_id("notifications")
+                        for noticia in noticias_encontradas:
+                            datos_rss = noticia["_source"]
+                            lista_noticias.append(datos_rss)
 
-                        # Creamos la notificación en el buzón
-                        nueva_notificacion = Notification(
-                            id=notif_id,
-                            alert_id=alert_id,
-                            timestamp=datetime.now(UTC),
-                            metrics=[Metric(name="noticias_encontradas", value=float(total_hits))],
-                            iptc_category=categoria_clasificada,
-                        )
-                        notifications_store[notif_id] = nueva_notificacion
-                        stats_store[1].total_notifications += 1
-                    # --- AQUÍ IRÁ LA LLAMADA PARA ENVIAR EL EMAIL ---
-                    usuario = users_store.get(alert.user_id)
-                    if usuario and usuario.email:
-                        send_alert_email(to_email=usuario.email, alert_name=alert.name, news_data=lista_noticias)
-            except Exception as e:
-                print(f"[RADAR] Error consultando alerta '{alert.name}': {e}")
-        print("[MOTOR RSS] Ciclo completado. Durmiendo 15 minutos...")
+                            # Creamos la notificación en BD
+                            # Nota: Asumo que "metrics" es un JSON o campo similar en BD
+                            nueva_notificacion = db_models.Notification(
+                                alert_id=alert.id,
+                                timestamp=datetime.now(UTC),
+                                metrics=[{"name": "noticias_encontradas", "value": float(total_hits)}],
+                                iptc_category=categoria_clasificada,
+                            )
+                            db.add(nueva_notificacion)
+                            db_stats.total_notifications += 1
+
+                        # --- LLAMADA PARA ENVIAR EL EMAIL ---
+                        usuario = db.query(db_models.User).filter(db_models.User.id == alert.user_id).first()
+                        if usuario and usuario.email:
+                            send_alert_email(to_email=usuario.email, alert_name=alert.name, news_data=lista_noticias)
+
+                except Exception as e:
+                    print(f"[RADAR] Error consultando alerta '{alert.name}': {e}")
+
+            # Guardamos todos los cambios en la BD (Notificaciones nuevas y actualización de Stats)
+            db.commit()
+
+        print("[MOTOR RSS] Actualizando estadísticas globales...")
+        update_global_stats(db)  # Actualizamos las estadísticas globales al finalizar el ciclo
         # Esperamos 15 minutos (900 segundos) hasta la próxima batida
-        # await asyncio.sleep(900)
-        await asyncio.sleep(30)  # Para pruebas, lo dejamos en 1 minuto
+        print("[MOTOR RSS] Ciclo completado. Durmiendo 15 minutos...")
+        # time.sleep(900)
+        time.sleep(60)  # Para pruebas
