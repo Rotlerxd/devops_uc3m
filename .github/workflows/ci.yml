@@ -77,11 +77,29 @@ jobs:
           path: Backend/coverage.xml
 
   # ──────────────────────────────────────────────
-  #  4. Backend functional tests (in-memory store)
-  # ──────────────────────────────────────────────
-  backend-functional:
-    name: Backend — Functional Tests
+  #  4. Backend integration tests (PostgreSQL)
+  # ─────────────────────────────────────────────-
+  backend-integration:
+    name: Backend — Integration Tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: newsradar_admin
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: newsradar_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U newsradar_admin -d newsradar_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: postgresql+psycopg2://newsradar_admin:test_password@localhost:5432/newsradar_test
+      SECRET_KEY: ci-test-secret-key-not-for-production
+      ELASTICSEARCH_URL: http://localhost:9200
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -93,10 +111,10 @@ jobs:
         run: |
           pip install -r Backend/requirements.txt
           pip install -r Backend/requirements-dev.txt
-      - name: Run functional tests
+      - name: Run integration tests
         run: |
           cd Backend
-          pytest tests/functional -v --tb=short -m functional
+          pytest tests/functional -v --tb=short -m integration
 
   # ──────────────────────────────────────────────
   #  5. Frontend tests (Vitest)

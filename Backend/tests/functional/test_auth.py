@@ -3,7 +3,7 @@
 import pytest
 
 
-@pytest.mark.functional
+@pytest.mark.integration
 class TestRegister:
     def test_register_success(self, client):
         response = client.post(
@@ -67,7 +67,7 @@ class TestRegister:
         assert response.status_code == 400
 
 
-@pytest.mark.functional
+@pytest.mark.integration
 class TestLogin:
     def test_login_success(self, client, registered_user):
         response = client.post(
@@ -94,7 +94,7 @@ class TestLogin:
         assert response.status_code == 401
 
 
-@pytest.mark.functional
+@pytest.mark.integration
 class TestVerifyEmail:
     def test_verify_with_invalid_token(self, client):
         response = client.get("/api/v1/auth/verify?token=invalid.token.here")

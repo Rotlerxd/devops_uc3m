@@ -374,7 +374,7 @@ def ensure_rss_for_source(source_id: int, channel_id: int, db: Session = Depends
 def sanitize_user(user_db: db_models.User, db: Session = Depends(get_db)) -> User:
     """Convierte el modelo SQLAlchemy a tu modelo Pydantic de salida exacto."""
     # Extraemos los IDs de la relación Muchos-a-Muchos de SQLAlchemy
-    role_ids = [role.id for role in user_db.roles] if user_db.roles else []
+    role_ids = [role.id for role in user_db.roles] if hasattr(user_db, 'roles') and user_db.roles else []
 
     return User(
         id=user_db.id,
@@ -594,7 +594,7 @@ def verify_email(token: str, db: Session = Depends(get_db)):
         return {"msg": "El usuario ya estaba verificado"}
 
     # 3. Actualizamos el estado y guardamos en PostgreSQL
-    db_user.is_verified = True
+    db_user.is_verified = True  # type: ignore[assignment]
     db.commit()
 
     # Opcional pero recomendado para asegurarnos de que el objeto local tiene los datos actualizados
@@ -1423,8 +1423,8 @@ def update_global_stats(db: Session) -> db_models.Stats:
         db.add(db_stats)
 
     # 4. Actualizamos los campos
-    db_stats.total_notifications = t_notifications
-    db_stats.metrics = current_metrics
+    db_stats.total_notifications = t_notifications  # type: ignore[assignment]
+    db_stats.metrics = current_metrics  # type: ignore[assignment]
     # Nota: total_news no lo tocamos aquí porque ese dato se traerá de Elasticsearch
 
     # 5. Guardamos en base de datos

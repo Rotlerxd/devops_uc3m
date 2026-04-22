@@ -8,7 +8,7 @@ from app.main import (
 )
 
 
-@pytest.mark.functional
+@pytest.mark.integration
 class TestUserEndpoints:
     def test_list_users_as_admin(self, client: TestClient):
         login_response = client.post(
@@ -111,7 +111,7 @@ class TestUserEndpoints:
         assert response.status_code == 404
 
 
-@pytest.mark.functional
+@pytest.mark.integration
 class TestRoleEndpoints:
     def test_list_roles_as_admin(self, client: TestClient):
         login_response = client.post(
@@ -190,7 +190,7 @@ class TestRoleEndpoints:
         assert response.status_code in (200, 204, 400, 409)
 
 
-@pytest.mark.functional
+@pytest.mark.integration
 class TestCategoryEndpoints:
     def test_list_categories(self, client: TestClient):
         login_response = client.post(
@@ -267,7 +267,7 @@ class TestCategoryEndpoints:
         assert response.status_code in (200, 204, 400, 409)
 
 
-@pytest.mark.functional
+@pytest.mark.integration
 class TestStatsEndpoints:
     def test_list_stats(self, client: TestClient):
         login_response = client.post(
@@ -300,7 +300,7 @@ class TestStatsEndpoints:
         assert response.status_code == 200
 
 
-@pytest.mark.functional
+@pytest.mark.integration
 class TestInformationSourceEndpoints:
     def test_list_sources(self, client: TestClient):
         login_response = client.post(
@@ -348,7 +348,7 @@ class TestInformationSourceEndpoints:
         assert response.status_code == 200
 
 
-@pytest.mark.functional
+@pytest.mark.integration
 class TestRSSChannelEndpoints:
     def test_list_channels_for_source(self, client: TestClient):
         login_response = client.post(
