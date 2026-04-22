@@ -1,11 +1,7 @@
-"""Functional tests for API endpoints in main.py."""
+"""Integration tests for API endpoints in main.py."""
 
 import pytest
 from fastapi.testclient import TestClient
-
-from app.main import (
-    counters,
-)
 
 
 @pytest.mark.integration
