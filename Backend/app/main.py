@@ -385,7 +385,7 @@ def sanitize_user(user_db: db_models.User, db: Session = Depends(get_db)) -> Use
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)
-) -> UserInDB:
+) -> db_models.User:
     """Autentica el token bearer y devuelve el usuario de PostgreSQL asociado."""
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Token inválido o ausente")
@@ -516,7 +516,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
     token = str(uuid4())
-    active_tokens[token] = db_user.id
+    active_tokens[token] = int(db_user.id)
     return TokenResponse(access_token=token)
 
 
