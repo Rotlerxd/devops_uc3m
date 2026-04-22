@@ -29,7 +29,7 @@ Backend/tests/
 │   ├── test_security.py     # password hashing, JWT tokens
 │   ├── test_schemas.py      # Pydantic validation
 │   └── test_crud_usuario.py # CRUD with mocked DB
-└── integration/
+└── functional/
     ├── conftest.py           # real PostgreSQL fixtures, test client
     ├── test_auth.py          # /login, /register, /me endpoints
     └── test_health.py        # /health endpoint
@@ -43,7 +43,8 @@ cd Backend && pytest tests/unit -m unit
 
 # Integration tests (requires PostgreSQL + Elasticsearch)
 cd Backend && docker compose up -d
-cd Backend && pytest tests/integration -m integration
+cd Backend && alembic upgrade head
+cd Backend && pytest tests/functional -m integration
 
 # All tests with coverage
 cd Backend && pytest tests/ --cov=app --cov-report=term-missing
@@ -53,6 +54,7 @@ cd Backend && pytest tests/ --cov=app --cov-report=term-missing
 
 - `@pytest.mark.unit` — isolated, no DB/network
 - `@pytest.mark.integration` — requires PostgreSQL + Elasticsearch
+- `@pytest.mark.functional` — legacy alias kept for older backend tests
 - `@pytest.mark.e2e` — reserved for Playwright (run separately)
 
 ### Async Testing
@@ -119,6 +121,6 @@ Or use the script: `scripts/test-e2e.sh` (starts services automatically).
 ## Adding New Tests
 
 1. **Backend unit test:** Create `test_<feature>.py` in `Backend/tests/unit/`. Use `@pytest.mark.unit`.
-2. **Backend integration test:** Create `test_<feature>.py` in `Backend/tests/integration/`. Use `@pytest.mark.integration`. Fixtures in `conftest.py` provide a test DB session and HTTP client.
+2. **Backend integration test:** Create `test_<feature>.py` in `Backend/tests/functional/`. Use `@pytest.mark.integration`. Fixtures in `conftest.py` provide a test DB session and HTTP client.
 3. **Frontend test:** Create `<Component>.test.jsx` co-located or in `Frontend/src/test/`.
 4. **E2E test:** Create `<flow>.spec.js` in `e2e/tests/`.

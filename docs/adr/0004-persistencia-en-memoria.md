@@ -4,7 +4,7 @@
 - **Fecha:** 2026-04-08
 - **Autores:** Equipo Backend (Alberto Nuñez, Francisco Ruiz)
 - **Reemplaza a:** Propuesta inicial de SQLAlchemy async + PostgreSQL
-- **Reemplazado por:** —
+- **Reemplazado por:** [ADR 0014](0014-postgresql-sqlalchemy-alembic.md)
 - **Relacionado con:** [ADR 0001](0001-framework-backend-fastapi.md), [ADR 0006](0006-elasticsearch-indexacion-noticias.md)
 
 ---
