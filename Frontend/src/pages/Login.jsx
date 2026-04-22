@@ -15,17 +15,32 @@ export default function Login() {
     try {
       const response = await fetch('http://127.0.0.1:8000/api/v1/auth/login', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
 
       const data = await response.json();
 
       if (response.ok) {
+        // 1. Guardamos el token
         localStorage.setItem('token', data.access_token);
-        navigate('/'); 
+        
+        // 2. Buscamos el ID del usuario usando su email
+        const userRes = await fetch('http://127.0.0.1:8000/api/v1/users', {
+          headers: { 'Authorization': `Bearer ${data.access_token}` }
+        });
+        
+        if (userRes.ok) {
+          const users = await userRes.json();
+          const currentUser = users.find(u => u.email === email);
+          if (currentUser) {
+            localStorage.setItem('userId', currentUser.id);
+            // Opcional: guardar los roles para proteger rutas más adelante
+            localStorage.setItem('userRoles', JSON.stringify(currentUser.role_ids)); 
+          }
+        }
+
+        navigate('/alertas'); // Te redirijo a alertas directamente para probar
       } else {
         setError(data.detail || 'Credenciales incorrectas');
       }
