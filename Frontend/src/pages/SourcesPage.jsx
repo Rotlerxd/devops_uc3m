@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  getSources, createSource, deleteSource, 
-  getCategories, getChannels, createChannel, deleteChannel 
+import { Link } from 'react-router-dom';
+import {
+  getSources, createSource, deleteSource,
+  getCategories, getChannels, createChannel, deleteChannel
 } from '../services/sourcesService';
 
 export default function SourcesPage() {
@@ -118,6 +119,11 @@ export default function SourcesPage() {
 
   return (
     <div className="container mt-4">
+      <ul className="nav nav-pills mb-4">
+        <li className="nav-item"><Link className="nav-link" to="/alertas">Alertas</Link></li>
+        <li className="nav-item"><Link className="nav-link active" to="/fuentes">Fuentes</Link></li>
+        <li className="nav-item"><Link className="nav-link" to="/buzon">Buzón</Link></li>
+      </ul>
       {/* Cabecera con Pestañas y Botones */}
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h2>Fuentes e Información</h2>
