@@ -1,4 +1,5 @@
 """Integration tests for API endpoints in main.py."""
+
 import random
 
 import pytest

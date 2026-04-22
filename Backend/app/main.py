@@ -594,7 +594,7 @@ def verify_email(token: str, db: Session = Depends(get_db)):
         return {"msg": "El usuario ya estaba verificado"}
 
     # 3. Actualizamos el estado y guardamos en PostgreSQL
-    db_user.is_verified = True  # type: ignore[assignment]
+    db_user.is_verified = True
     db.commit()
 
     # Opcional pero recomendado para asegurarnos de que el objeto local tiene los datos actualizados
@@ -1423,8 +1423,8 @@ def update_global_stats(db: Session) -> db_models.Stats:
         db.add(db_stats)
 
     # 4. Actualizamos los campos
-    db_stats.total_notifications = t_notifications  # type: ignore[assignment]
-    db_stats.metrics = current_metrics  # type: ignore[assignment]
+    db_stats.total_notifications = t_notifications
+    db_stats.metrics = current_metrics
     # Nota: total_news no lo tocamos aquí porque ese dato se traerá de Elasticsearch
 
     # 5. Guardamos en base de datos
