@@ -6,6 +6,7 @@ import json
 import os
 import threading
 import time
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -38,7 +39,10 @@ load_dotenv(dotenv_path=env_path)
 
 # 2. Instanciar el cliente global
 es_client = Elasticsearch(ELASTICSEARCH_URL)
-Base.metadata.create_all(bind=engine)
+# Crear tablas solo si hay conexión a PostgreSQL disponible
+# (el tests necesitan importar sin DB)
+with suppress(Exception):
+    Base.metadata.create_all(bind=engine)
 
 
 def check_elastic_connection():
@@ -791,7 +795,7 @@ def delete_role(role_id: int, _: UserInDB = Depends(get_current_user), db: Sessi
     tags=["alerts"],
 )
 def list_user_alerts(
-    user_id: int, current_user: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
+    user_id: int, current_user: db_models.User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> list[Alert]:
     """Lista las alertas asociadas a un usuario."""
     ensure_user_exists(user_id, db)
@@ -810,7 +814,7 @@ def list_user_alerts(
 def create_user_alert(
     user_id: int,
     payload: AlertCreate,
-    current_user: UserInDB = Depends(get_current_user),
+    current_user: db_models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Alert:
     """Crea una alerta para el usuario autenticado validando reglas de negocio."""
@@ -860,7 +864,7 @@ def create_user_alert(
     tags=["alerts"],
 )
 def get_user_alert(
-    user_id: int, alert_id: int, current_user: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
+    user_id: int, alert_id: int, current_user: db_models.User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> Alert:
     """Obtiene una alerta concreta de un usuario."""
     nombres_roles = [rol.name.lower() for rol in current_user.roles]
@@ -882,7 +886,7 @@ def update_user_alert(
     user_id: int,
     alert_id: int,
     payload: AlertUpdate,
-    current_user: UserInDB = Depends(get_current_user),
+    current_user: db_models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Alert:
     """Actualiza una alerta de usuario."""
@@ -920,7 +924,7 @@ def update_user_alert(
     tags=["alerts"],
 )
 def delete_user_alert(
-    user_id: int, alert_id: int, current_user: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
+    user_id: int, alert_id: int, current_user: db_models.User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> None:
     """Elimina una alerta y sus notificaciones relacionadas."""
     db_alert = ensure_alert_for_user(user_id, alert_id, db)
@@ -949,7 +953,7 @@ def delete_user_alert(
 def list_alert_notifications(
     user_id: int,
     alert_id: int,
-    current_user: UserInDB = Depends(get_current_user),
+    current_user: db_models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[Notification]:
     """Lista notificaciones de una alerta."""

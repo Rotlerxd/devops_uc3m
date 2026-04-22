@@ -83,7 +83,7 @@ def send_verification_email(to_email: str, token: str):
 
     msg = MIMEMultipart()
     msg["Subject"] = "NEWSRADAR - Verifica tu cuenta"
-    msg["From"] = GMAIL_USER
+    msg["From"] = GMAIL_USER  # ty: ignore[invalid-assignment]
     msg["To"] = to_email
 
     verification_link = f"http://localhost:8000/api/v1/auth/verify?token={token}"
@@ -128,10 +128,10 @@ def send_alert_email(to_email: str, alert_name: str, news_data):
     load_dotenv(dotenv_path=env_path)
 
     msg = MIMEMultipart()
-    # 1. ASUNTO ESTRICTO: “Actualización de <alerta> en <día/hora>”
+    # 1. ASUNTO ESTRICTO: "Actualización de <alerta> en <día/hora>"
     now_str = datetime.now().strftime("%d/%m/%Y %H:%M")
     msg["Subject"] = f"Actualización de {alert_name} en {now_str}"
-    msg["From"] = GMAIL_USER
+    msg["From"] = GMAIL_USER  # ty: ignore[invalid-assignment]
     msg["To"] = to_email
 
     # 2. CUERPO HTML (Siguiendo tu estilo pero con los datos requeridos)

@@ -15,14 +15,16 @@ describe('Register page', () => {
     expect(screen.getByText('Crear Cuenta')).toBeInTheDocument();
   });
 
-  it('has name, email, and password fields', () => {
+  it('has first name, last name, organization, email, and password fields', () => {
     render(
       <MemoryRouter>
         <Register />
       </MemoryRouter>
     );
 
-    expect(screen.getByLabelText(/nombre completo/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/nombre/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/apellidos/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/organización/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/correo electrónico/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/contraseña/i)).toBeInTheDocument();
   });
