@@ -1,4 +1,4 @@
-# ADR 0006: Integración con API REST para Gestión de Fuentes y Alertas
+# ADR 0014: Integración con API REST para Gestión de Fuentes y Alertas
 
 - **Estado:** Aceptado
 - **Fecha:** 2026-04-18
