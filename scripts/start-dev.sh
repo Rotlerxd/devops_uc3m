@@ -56,10 +56,37 @@ EXAMPLES:
 EOF
 }
 
+check_uv() {
+    if command -v uv &>/dev/null; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+choose_python() {
+    if command -v python3.11 &>/dev/null; then
+        command -v python3.11
+    elif command -v python3 &>/dev/null; then
+        command -v python3
+    else
+        return 1
+    fi
+}
+
 check_venv() {
     if [[ ! -d "$ROOT_DIR/.venv" ]]; then
-        log_info "Creating virtual environment..."
-        python3 -m venv "$ROOT_DIR/.venv"
+        if check_uv; then
+            log_info "Creating virtual environment with uv..."
+            cd "$ROOT_DIR" && uv venv
+        else
+            PYTHON_BIN="$(choose_python)" || {
+                log_error "No python3 interpreter found to create the virtual environment"
+                exit 1
+            }
+            log_info "Creating virtual environment with python..."
+            "$PYTHON_BIN" -m venv "$ROOT_DIR/.venv"
+        fi
     fi
 
     if [[ ! -f "$VENV_PYTHON" ]]; then
@@ -70,12 +97,10 @@ check_venv() {
 
 install_backend_deps() {
     log_info "Checking backend dependencies..."
-    if [[ -f "$BACKEND_DIR/requirements.txt" ]]; then
-        "$VENV_PIP" install -r "$BACKEND_DIR/requirements.txt" --quiet 2>/dev/null || \
+    if check_uv; then
+        cd "$ROOT_DIR" && uv pip install -r "$BACKEND_DIR/requirements.txt" -r "$BACKEND_DIR/requirements-dev.txt"
+    else
         "$VENV_PIP" install -r "$BACKEND_DIR/requirements.txt"
-    fi
-    if [[ -f "$BACKEND_DIR/requirements-dev.txt" ]]; then
-        "$VENV_PIP" install -r "$BACKEND_DIR/requirements-dev.txt" --quiet 2>/dev/null || \
         "$VENV_PIP" install -r "$BACKEND_DIR/requirements-dev.txt"
     fi
 }
@@ -115,7 +140,7 @@ run_migrations() {
 start_backend() {
     log_info "Starting backend..."
     cd "$BACKEND_DIR"
-    "$VENV_PYTHON" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 &
+    NEWSRADAR_CONFIGURE_LOCAL_ELASTICSEARCH=true "$VENV_PYTHON" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 &
     BACKEND_PID=$!
     cd "$ROOT_DIR"
     log_info "Backend started on http://localhost:8000"
@@ -124,7 +149,7 @@ start_backend() {
 start_backend_blocking() {
     log_info "Starting backend (blocking)..."
     cd "$BACKEND_DIR"
-    exec "$VENV_PYTHON" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+    exec env NEWSRADAR_CONFIGURE_LOCAL_ELASTICSEARCH=true "$VENV_PYTHON" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 }
 
 start_frontend() {

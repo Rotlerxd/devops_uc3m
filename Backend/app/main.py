@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -10,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import feedparser
+import requests
 from dotenv import load_dotenv
 from elasticsearch import Elasticsearch
 from fastapi import Depends, FastAPI, HTTPException, Response, status
@@ -34,12 +36,13 @@ from app.db.database import SessionLocal, get_db
 from app.models import models as db_models
 
 ELASTICSEARCH_URL = "http://localhost:9200"
+NEWS_INDEX = "newsradar_articles"
 
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
 # 2. Instanciar el cliente global
-es_client = Elasticsearch(ELASTICSEARCH_URL)
+es_client = Elasticsearch(ELASTICSEARCH_URL, request_timeout=30, retry_on_timeout=True, max_retries=3)
 
 
 def check_elastic_connection():
@@ -57,10 +60,79 @@ def check_elastic_connection():
         print(f"[STARTUP] Error crítico al intentar conectar con Elasticsearch: {e}")
 
 
+def wait_for_elasticsearch_ready(timeout_seconds: int = 60, interval_seconds: int = 2) -> bool:
+    """Espera a que Elasticsearch acepte peticiones antes de tocar índices o settings."""
+    deadline = time.monotonic() + timeout_seconds
+    last_error: Exception | None = None
+
+    while time.monotonic() < deadline:
+        try:
+            if es_client.ping():
+                return True
+        except Exception as exc:
+            last_error = exc
+
+        time.sleep(interval_seconds)
+
+    if last_error is not None:
+        print(f"[STARTUP] Elasticsearch no respondió a tiempo: {type(last_error).__name__}: {last_error}")
+    else:
+        print("[STARTUP] Elasticsearch no respondió a tiempo.")
+    return False
+
+
+def configure_local_elasticsearch() -> None:
+    """Relaja restricciones locales para que Elasticsearch sea usable en desarrollo."""
+    try:
+        if not wait_for_elasticsearch_ready():
+            return
+
+        es_client.cluster.put_settings(
+            transient={"cluster.routing.allocation.disk.threshold_enabled": False}
+        )
+
+        if not es_client.indices.exists(index=NEWS_INDEX):
+            es_client.indices.create(
+                index=NEWS_INDEX,
+                settings={"index": {"number_of_shards": 1, "number_of_replicas": 0}},
+            )
+            print(f"[STARTUP] Índice {NEWS_INDEX} creado con replicas=0.")
+            return
+
+        es_client.indices.put_settings(
+            index=NEWS_INDEX,
+            settings={"index": {"number_of_replicas": 0}},
+        )
+        print(f"[STARTUP] Índice {NEWS_INDEX} ajustado a replicas=0.")
+    except Exception as e:
+        print(f"[STARTUP] Error ajustando Elasticsearch local: {e}")
+
+
+def should_configure_local_elasticsearch() -> bool:
+    """Habilita ajustes locales de Elasticsearch solo cuando se solicita explícitamente."""
+    return os.getenv("NEWSRADAR_CONFIGURE_LOCAL_ELASTICSEARCH", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def normalize_published_at(entry) -> str:
+    """Devuelve una fecha ISO-8601 segura para Elasticsearch."""
+    published_parsed = entry.get("published_parsed")
+    if published_parsed:
+        return datetime(*published_parsed[:6], tzinfo=UTC).isoformat()
+
+    return datetime.now(UTC).isoformat()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Inicializa datos base y arranca servicios auxiliares al levantar la app."""
     create_seed_data()
+    if should_configure_local_elasticsearch():
+        configure_local_elasticsearch()
     check_elastic_connection()
 
     motor_thread = threading.Thread(target=rss_fetcher_engine, daemon=True)
@@ -1404,8 +1476,9 @@ def rss_fetcher_engine():
             canales = list(db.scalars(select(db_models.RSSChannel)))
             for channel in canales:
                 try:
-                    # Descargamos y parseamos el XML
-                    feed = feedparser.parse(str(channel.url))
+                    response = requests.get(str(channel.url), timeout=15)
+                    response.raise_for_status()
+                    feed = feedparser.parse(response.content)
 
                     nuevas_noticias = 0
                     for entry in feed.entries:
@@ -1414,22 +1487,28 @@ def rss_fetcher_engine():
                             "title": entry.get("title", ""),
                             "link": entry.get("link", ""),
                             "summary": entry.get("summary", ""),
-                            "published_at": entry.get("published", datetime.now(UTC).isoformat()),
+                            "published_at": normalize_published_at(entry),
                             "channel_id": channel.id,
                             "category_id": channel.category_id,
                         }
 
                         # Lo mandamos a Elasticsearch (al índice 'newsradar_articles')
                         # Usamos el link como ID en Elastic para evitar duplicados si la noticia ya se bajó
-                        es_client.index(index="newsradar_articles", id=doc["link"], document=doc)
-                        nuevas_noticias += 1
+                        try:
+                            es_client.index(index=NEWS_INDEX, id=doc["link"], document=doc)
+                            nuevas_noticias += 1
+                        except Exception as e:
+                            print(
+                                f"[ELASTIC] Error indexando noticia {doc['link']} del canal {channel.url}: "
+                                f"{type(e).__name__}: {e}"
+                            )
 
                     if nuevas_noticias > 0:
                         print(f"[MOTOR RSS] {nuevas_noticias} noticias indexadas de: {channel.url}")
                         db_stats.total_news += nuevas_noticias
 
                 except Exception as e:
-                    print(f"[MOTOR RSS] Error procesando canal {channel.url}: {e}")
+                    print(f"[MOTOR RSS] Error procesando canal {channel.url}: {type(e).__name__}: {e}")
 
             print("[EL RADAR] Cruzando alertas con las nuevas noticias...")
 
@@ -1503,7 +1582,7 @@ def rss_fetcher_engine():
 
                 try:
                     # 2. Disparamos la búsqueda en el índice
-                    resultados = es_client.search(index="newsradar_articles", body=consulta)
+                    resultados = es_client.search(index=NEWS_INDEX, body=consulta)
 
                     # Elasticsearch devuelve el total de coincidencias en esta ruta
                     total_hits = resultados["hits"]["total"]["value"]
