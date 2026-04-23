@@ -112,4 +112,5 @@ Architecture decisions are documented in [docs/adr/](docs/adr/):
 | [0011](docs/adr/0011-pipeline-cicd-github-actions.md) | CI/CD: GitHub Actions |
 | [0012](docs/adr/0012-seguridad-scanning-pip-audit-trivy-sonarqube.md) | Seguridad: pip-audit + Trivy + SonarQube |
 | [0013](docs/adr/0013-documentacion-backend-mkdocs-docstrings.md) | Documentación backend: docstrings + MkDocs |
-| [0014](docs/adr/0014-postgresql-sqlalchemy-alembic.md) | Persistencia: PostgreSQL + SQLAlchemy + Alembic |
+| [0014](docs/adr/0014-integración-api-gestion-fuentes-alertas.md) | Integración con API REST para Gestión de Fuentes y Alertas |
+| [0015](docs/adr/0015-postgresql-sqlalchemy-alembic.md) | Persistencia: PostgreSQL + SQLAlchemy + Alembic |

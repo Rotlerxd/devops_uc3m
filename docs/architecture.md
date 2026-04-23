@@ -21,7 +21,7 @@ contenedores Docker.
 **Decisión clave actual:** las entidades del sistema se almacenan en
 **PostgreSQL 15** mediante **SQLAlchemy 2.0**, con migraciones versionadas por
 **Alembic**. Elasticsearch sigue dedicándose a la indexación y búsqueda de
-noticias RSS. Ver [ADR 0014](adr/0014-postgresql-sqlalchemy-alembic.md).
+noticias RSS. Ver [ADR 0015](adr/0015-postgresql-sqlalchemy-alembic.md).
 
 ---
 
@@ -161,7 +161,8 @@ Backend API (FastAPI — app/main.py)
 | [0011](adr/0011-pipeline-cicd-github-actions.md) | CI/CD: GitHub Actions | Aceptado |
 | [0012](adr/0012-seguridad-scanning-pip-audit-trivy-sonarqube.md) | Seguridad: pip-audit + Trivy + SonarQube | Aceptado |
 | [0013](adr/0013-documentacion-backend-mkdocs-docstrings.md) | Documentación backend: docstrings + MkDocs | Aceptado |
-| [0014](adr/0014-postgresql-sqlalchemy-alembic.md) | Persistencia: PostgreSQL + SQLAlchemy + Alembic | Aceptado |
+| [0014](adr/0014-integración-api-gestion-fuentes-alertas.md) | Integración con API REST para Gestión de Fuentes y Alertas | Aceptado |
+| [0015](adr/0015-postgresql-sqlalchemy-alembic.md) | Persistencia: PostgreSQL + SQLAlchemy + Alembic | Aceptado |
 
 ---
 

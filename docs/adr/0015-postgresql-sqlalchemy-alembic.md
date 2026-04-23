@@ -1,4 +1,4 @@
-# ADR 0014: Persistencia con PostgreSQL, SQLAlchemy y Alembic
+# ADR 0015: Persistencia con PostgreSQL, SQLAlchemy y Alembic
 
 - **Estado:** Aceptado
 - **Fecha:** 2026-04-22

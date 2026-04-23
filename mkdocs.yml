@@ -45,4 +45,5 @@ nav:
       - 0011 Pipeline CI/CD: adr/0011-pipeline-cicd-github-actions.md
       - 0012 Seguridad scanning: adr/0012-seguridad-scanning-pip-audit-trivy-sonarqube.md
       - 0013 Documentación backend con MkDocs: adr/0013-documentacion-backend-mkdocs-docstrings.md
-      - 0014 PostgreSQL + SQLAlchemy + Alembic: adr/0014-postgresql-sqlalchemy-alembic.md
+      - 0014 Integración con API REST para Gestión de Fuentes y Alertas: adr/0014-integración-api-gestion-fuentes-alertas.md
+      - 0015 PostgreSQL + SQLAlchemy + Alembic: adr/0015-postgresql-sqlalchemy-alembic.md
