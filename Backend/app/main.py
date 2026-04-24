@@ -87,9 +87,7 @@ def configure_local_elasticsearch() -> None:
         if not wait_for_elasticsearch_ready():
             return
 
-        es_client.cluster.put_settings(
-            transient={"cluster.routing.allocation.disk.threshold_enabled": False}
-        )
+        es_client.cluster.put_settings(transient={"cluster.routing.allocation.disk.threshold_enabled": False})
 
         if not es_client.indices.exists(index=NEWS_INDEX):
             es_client.indices.create(

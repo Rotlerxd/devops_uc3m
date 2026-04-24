@@ -3,6 +3,8 @@ site_description: Documentación técnica de NEWSRADAR
 repo_url: https://github.com/Rotlerxd/devops_uc3m
 repo_name: Rotlerxd/devops_uc3m
 
+docs_dir: docs
+
 theme:
   name: material
   language: es
@@ -26,6 +28,7 @@ nav:
   - Backend:
       - Documentación de docstrings: backend/docstrings.md
       - Referencia API Python: backend/api-reference.md
+      - Diagrama ER: backend/er-diagram.md
   - Desarrollo:
       - Calidad: development/quality.md
       - Testing: development/testing.md
@@ -45,5 +48,7 @@ nav:
       - 0011 Pipeline CI/CD: adr/0011-pipeline-cicd-github-actions.md
       - 0012 Seguridad scanning: adr/0012-seguridad-scanning-pip-audit-trivy-sonarqube.md
       - 0013 Documentación backend con MkDocs: adr/0013-documentacion-backend-mkdocs-docstrings.md
-      - 0014 Integración con API REST para Gestión de Fuentes y Alertas: adr/0014-integración-api-gestion-fuentes-alertas.md
+      - 0014 Integración con API REST para Gestión de Fuentes y Alertas: adr/0014-integracion-api-gestion-fuentes-alertas.md
       - 0015 PostgreSQL + SQLAlchemy + Alembic: adr/0015-postgresql-sqlalchemy-alembic.md
+  - IA:
+      - Uso de IA: ai/usage.md
