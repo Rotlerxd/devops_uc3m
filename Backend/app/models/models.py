@@ -1,6 +1,11 @@
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Table
-from sqlalchemy.dialects.postgresql import ARRAY, JSON
-from sqlalchemy.orm import relationship
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Table, text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
 
@@ -8,89 +13,104 @@ from app.db.database import Base
 user_role_table = Table(
     "user_roles",
     Base.metadata,
-    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
-    Column("role_id", Integer, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("role_id", ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
 )
 
 
 class Role(Base):
     __tablename__ = "roles"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), unique=True, nullable=False)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    users: Mapped[list[User]] = relationship("User", secondary=user_role_table, back_populates="roles")
 
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=False)
-    first_name = Column(String(120), nullable=False)
-    last_name = Column(String(120), nullable=False)
-    organization = Column(String(180), nullable=False)
-    password = Column(String(128), nullable=False)
-    is_verified = Column(Boolean, default=False)
 
-    roles = relationship("Role", secondary=user_role_table)
-    alerts = relationship("Alert", back_populates="user", cascade="all, delete-orphan")
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    first_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    last_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    organization: Mapped[str] = mapped_column(String(180), nullable=False)
+    password: Mapped[str] = mapped_column(String(128), nullable=False)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+
+    roles: Mapped[list[Role]] = relationship("Role", secondary=user_role_table, back_populates="users")
+    alerts: Mapped[list[Alert]] = relationship("Alert", back_populates="user", cascade="all, delete-orphan")
 
 
 class Alert(Base):
     __tablename__ = "alerts"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    name = Column(String(200), nullable=False)
-    cron_expression = Column(String(120), nullable=False)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    cron_expression: Mapped[str] = mapped_column(String(120), nullable=False)
 
     # Arrays y JSON para adaptarnos a los Pydantic actuales sin crear tablas extra innecesarias
-    descriptors = Column(ARRAY(String), default=list)
-    categories = Column(JSON, default=list)  # Guarda list[AlertCategoryItem]
+    descriptors: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, nullable=False)
+    categories: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
 
-    user = relationship("User", back_populates="alerts")
-    notifications = relationship("Notification", back_populates="alert", cascade="all, delete-orphan")
+    user: Mapped[User] = relationship("User", back_populates="alerts")
+    notifications: Mapped[list[Notification]] = relationship(
+        "Notification", back_populates="alert", cascade="all, delete-orphan"
+    )
 
 
 class Notification(Base):
     __tablename__ = "notifications"
-    id = Column(Integer, primary_key=True, index=True)
-    alert_id = Column(Integer, ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False)
-    timestamp = Column(String, nullable=False)  # Guardamos ISO format
-    metrics = Column(JSON, default=list)  # Guarda list[Metric]
-    iptc_category = Column(String, nullable=False)
 
-    alert = relationship("Alert", back_populates="notifications")
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    alert_id: Mapped[int] = mapped_column(ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    metrics: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
+    iptc_category: Mapped[str] = mapped_column(String, nullable=False)
+
+    alert: Mapped[Alert] = relationship("Alert", back_populates="notifications")
 
 
 class Category(Base):
     __tablename__ = "categories"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(120), nullable=False, unique=True)
-    source = Column(String, default="IPTC")
 
-    channels = relationship("RSSChannel", back_populates="category")
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    source: Mapped[str] = mapped_column(String, default="IPTC", nullable=False)
+
+    channels: Mapped[list[RSSChannel]] = relationship("RSSChannel", back_populates="category")
 
 
 class InformationSource(Base):
     __tablename__ = "information_sources"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(120), nullable=False)
-    url = Column(String, nullable=False)
 
-    channels = relationship("RSSChannel", back_populates="source", cascade="all, delete-orphan")
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    url: Mapped[str] = mapped_column(String, nullable=False)
+
+    channels: Mapped[list[RSSChannel]] = relationship(
+        "RSSChannel", back_populates="source", cascade="all, delete-orphan"
+    )
 
 
 class RSSChannel(Base):
     __tablename__ = "rss_channels"
-    id = Column(Integer, primary_key=True, index=True)
-    information_source_id = Column(Integer, ForeignKey("information_sources.id", ondelete="CASCADE"), nullable=False)
-    category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
-    url = Column(String, nullable=False)
 
-    source = relationship("InformationSource", back_populates="channels")
-    category = relationship("Category", back_populates="channels")
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    information_source_id: Mapped[int] = mapped_column(
+        ForeignKey("information_sources.id", ondelete="CASCADE"), nullable=False
+    )
+    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"), nullable=False)
+    url: Mapped[str] = mapped_column(String, nullable=False)
+
+    source: Mapped[InformationSource] = relationship("InformationSource", back_populates="channels")
+    category: Mapped[Category] = relationship("Category", back_populates="channels")
 
 
 class Stats(Base):
     __tablename__ = "stats"
-    id = Column(Integer, primary_key=True, index=True)
-    total_news = Column(Integer, default=0)
-    total_notifications = Column(Integer, default=0)
-    metrics = Column(JSON, default=list)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    total_news: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_notifications: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    metrics: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)

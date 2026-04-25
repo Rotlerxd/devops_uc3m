@@ -18,11 +18,10 @@ El sistema sigue una **arquitectura en capas** con separación clara entre
 visualización, lógica de negocio, API REST y persistencia, desplegado mediante
 contenedores Docker.
 
-**Decisión clave (Sprint 3):** tras revisión con el profesor, las entidades
-del sistema (usuarios, alertas, fuentes, roles) se almacenan en **memoria**
-mediante estructuras `dict` de Python. Elasticsearch sigue siendo el único
-sistema con persistencia real en disco, exclusivamente para las noticias
-indexadas. Ver [ADR 0004](adr/0004-persistencia-postgresql.md).
+**Decisión clave actual:** las entidades del sistema se almacenan en
+**PostgreSQL 15** mediante **SQLAlchemy 2.0**, con migraciones versionadas por
+**Alembic**. Elasticsearch sigue dedicándose a la indexación y búsqueda de
+noticias RSS. Ver [ADR 0015](adr/0015-postgresql-sqlalchemy-alembic.md).
 
 ---
 
@@ -70,12 +69,9 @@ indexadas. Ver [ADR 0004](adr/0004-persistencia-postgresql.md).
 | Contenedor | Tecnología | Puerto | Responsabilidad |
 |---|---|---|---|
 | Frontend | React 19 + Vite | 5173 | Interfaz de usuario, panel de mando |
-| Backend API | FastAPI + Python | 8000 | Lógica de negocio, API REST, motor RSS, persistencia en memoria |
-| Motor de búsqueda | Elasticsearch 8.12 | 9200 | Indexación y búsqueda de noticias RSS (única persistencia en disco) |
-
-> **Nota:** PostgreSQL no forma parte de la arquitectura del proyecto.
-> Las entidades del sistema se mantienen en memoria dentro del proceso del
-> backend. Ver [ADR 0004](adr/0004-persistencia-postgresql.md).
+| Backend API | FastAPI + Python | 8000 | Lógica de negocio, API REST, motor RSS |
+| PostgreSQL | PostgreSQL 15 | 5432 | Persistencia relacional de usuarios, alertas, fuentes, canales y estadísticas |
+| Motor de búsqueda | Elasticsearch 8.12 | 9200 | Indexación y búsqueda de noticias RSS |
 
 ```
 ┌────────────────────────────────────────────────────────┐
@@ -86,19 +82,15 @@ indexadas. Ver [ADR 0004](adr/0004-persistencia-postgresql.md).
 │  │  React + Vite   │  puerto 5173  │    FastAPI    │  │
 │  └─────────────────┘               │  puerto 8000  │  │
 │                                    │               │  │
-│                                    │ ┌───────────┐ │  │
-│                                    │ │  Memory   │ │  │
-│                                    │ │  Stores   │ │  │
-│                                    │ │  (dicts)  │ │  │
-│                                    │ └─────┬─────┘ │  │
-│                                    └───────┼───────┘  │
-│                                            │ puerto    │
-│                                            │ 9200      │
-│                                    ┌───────▼───────┐  │
-│                                    │ Elasticsearch │  │
-│                                    │     8.12      │  │
-│                                    │  (noticias)   │  │
-│                                    └───────────────┘  │
+│                                    └───────┬────────┘  │
+│                                            │            │
+│                   puerto 5432              │ puerto     │
+│               ┌───────────────┐            │ 9200       │
+│               │ PostgreSQL 15 │     ┌──────▼───────┐   │
+│               │ SQLAlchemy ORM│     │ Elasticsearch│   │
+│               │   Alembic     │     │     8.12     │   │
+│               └───────────────┘     │  (noticias)  │   │
+│                                     └──────────────┘   │
 └────────────────────────────────────────────────────────┘
 
 Comunicaciones externas:
@@ -120,18 +112,13 @@ Backend API (FastAPI — app/main.py)
 │   ├── Notification / Stats / Role
 │   └── LoginRequest / TokenResponse
 │
-├── In-Memory Stores (estado global del proceso)
-│   ├── users_store:               dict[int, UserInDB]
-│   ├── alerts_store:              dict[int, Alert]
-│   ├── roles_store:               dict[int, Role]
-│   ├── categories_store:          dict[int, Category]
-│   ├── information_sources_store: dict[int, InformationSource]
-│   ├── rss_channels_store:        dict[int, RSSChannel]
-│   ├── notifications_store:       dict[int, Notification]
-│   └── stats_store:               dict[int, Stats]
+├── Persistencia relacional
+│   ├── app/db/database.py      → engine, sesiones, Base tipada
+│   ├── app/models/models.py    → modelos SQLAlchemy 2.0 tipados
+│   └── alembic/                → migraciones de esquema
 │
-├── Inicialización (startup)
-│   └── create_seed_data()  ← carga rss_seed.json en memoria al arrancar
+├── Inicialización (lifespan)
+│   └── create_seed_data()  ← carga rss_seed.json en PostgreSQL al arrancar
 │
 ├── Endpoints API REST (/api/v1/...)
 │   ├── /auth                                        → login, register, verify
@@ -144,11 +131,11 @@ Backend API (FastAPI — app/main.py)
 │   ├── /information-sources/{id}/rss-channels       → CRUD canales RSS
 │   └── /stats                                       → estadísticas globales
 │
-├── Motor RSS (asyncio background task)
+├── Motor RSS (background thread)
 │   └── rss_fetcher_engine()
 │       ├── Descarga feeds con feedparser cada 30s
 │       ├── Indexa artículos en Elasticsearch (índice: newsradar_articles)
-│       └── Cruza con alertas activas → genera Notifications en memoria
+│       └── Cruza con alertas activas → genera Notifications en PostgreSQL
 │
 └── core/
     └── security.py  ← bcrypt, JWT, create_verification_token,
@@ -164,56 +151,64 @@ Backend API (FastAPI — app/main.py)
 | [0001](adr/0001-framework-backend-fastapi.md) | Framework backend: FastAPI + Pydantic V2 | Aceptado |
 | [0002](adr/0002-autenticacion-jwt.md) | Autenticación: JWT stateless | Aceptado |
 | [0003](adr/0003-verificacion-email-smtplib-mailtrap.md) | Email: smtplib + Mailtrap | Aceptado |
-| [0004](adr/0004-persistencia-postgresql.md) | Persistencia: in-memory stores (Python dict) | Aceptado |
+| [0004](adr/0004-persistencia-en-memoria.md) | Persistencia en memoria | Histórico, supersedido |
 | [0005](adr/0005-frontend-react-vite.md) | Frontend: React 19 + Vite | Aceptado |
 | [0006](adr/0006-elasticsearch-indexacion-noticias.md) | Motor de búsqueda: Elasticsearch 8.12 | Aceptado |
 | [0007](adr/0007-frontend-bootstrap-react-router.md) | UI: Bootstrap 5 + React Router | Aceptado |
 | [0008](adr/0008-calidad-codigo-ruff-ty.md) | Calidad: Ruff + Ty | Aceptado |
 | [0009](adr/0009-estrategia-testing-pytest-vitest-playwright.md) | Testing: Pytest + Vitest + Playwright | Aceptado |
-| [0010](adr/0010-migraciones-bd-alembic.md) | ~~Migraciones: Alembic~~ | Supersedido por ADR 0004 |
+| [0010](adr/0010-migraciones-bd-alembic.md) | Migraciones: Alembic | Histórico |
 | [0011](adr/0011-pipeline-cicd-github-actions.md) | CI/CD: GitHub Actions | Aceptado |
 | [0012](adr/0012-seguridad-scanning-pip-audit-trivy-sonarqube.md) | Seguridad: pip-audit + Trivy + SonarQube | Aceptado |
 | [0013](adr/0013-documentacion-backend-mkdocs-docstrings.md) | Documentación backend: docstrings + MkDocs | Aceptado |
+| [0014](adr/0014-integracion-api-gestion-fuentes-alertas.md) | Integración con API REST para Gestión de Fuentes y Alertas | Aceptado |
+| [0015](adr/0015-postgresql-sqlalchemy-alembic.md) | Persistencia: PostgreSQL + SQLAlchemy + Alembic | Aceptado |
 
 ---
 
 ## 4. Modelo de datos
 
-### 4.1 Entidades en memoria (proceso Backend)
+### 4.1 Esquema relacional principal (PostgreSQL)
 
-Los datos persisten únicamente durante el ciclo de vida del proceso. Al
-reiniciar el servidor, las entidades se recargan desde `rss_seed.json`.
+Las entidades principales se persisten en PostgreSQL y el esquema se crea con
+`alembic upgrade head`.
 
 ```
-users_store
+users
   id              int   (autoincremental)
   email           str   (único)
   password        str   (hash bcrypt)
   first_name      str
   last_name       str
   organization    str
-  role_ids        list[int]
+  roles           many-to-many → roles
   is_verified     bool  (default: False)
 
-alerts_store
+alerts
   id              int
-  user_id         int   → users_store
+  user_id         int   → users.id
   name            str
   descriptors     list[str]   (3–10 palabras clave)
   categories      list[AlertCategoryItem]  (código + label IPTC)
   cron_expression str
 
-rss_channels_store
+rss_channels
   id                     int
-  information_source_id  int  → information_sources_store
+  information_source_id  int  → information_sources.id
   url                    str
-  category_id            int  → categories_store
+  category_id            int  → categories.id
 
-notifications_store
+notifications
   id         int
-  alert_id   int  → alerts_store
+  alert_id   int  → alerts.id
   timestamp  datetime
   metrics    list[Metric]
+
+stats
+  id                   int
+  total_news           int
+  total_notifications  int
+  metrics              list[Metric]
 ```
 
 ### 4.2 Documentos indexados (Elasticsearch — índice `newsradar_articles`)

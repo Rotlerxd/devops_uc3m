@@ -64,9 +64,9 @@ push/PR → ┌──────────────┐
 | `backend-lint` | Ruff check + format check | Python |
 | `backend-typecheck` | Ty type check | Python |
 | `backend-unit` | pytest unit tests + coverage | Python |
-| `backend-integration` | pytest integration tests | Python + PostgreSQL + Elasticsearch |
+| `backend-integration` | Alembic upgrade + pytest integration tests | Python + PostgreSQL + Elasticsearch |
 | `frontend-test` | Vitest unit tests + build check | Node.js |
-| `e2e` | Playwright E2E tests | Full stack (Python + Node + PostgreSQL) |
+| `e2e` | Alembic upgrade + Playwright E2E tests | Full stack (Python + Node + PostgreSQL) |
 | `security` | pip-audit + npm audit | Python + Node |
 | `docker-build` | Build Docker image validation | Docker |
 | `sonarqube` | SonarQube/SonarCloud analysis | SONAR_TOKEN secret |
@@ -115,6 +115,9 @@ Integration and E2E jobs use GitHub Actions service containers:
 - **Elasticsearch 8.12** — single-node mode, security disabled
 
 These start automatically before tests run and are torn down after.
+
+Before backend integration and E2E tests, the pipeline runs `alembic upgrade head`
+so the schema is created from migrations instead of application startup side effects.
 
 ---
 

@@ -47,7 +47,7 @@ testpaths = ["Backend/tests"]
 markers = [
     "unit: isolated unit tests (no external services)",
     "integration: tests requiring PostgreSQL or Elasticsearch",
-    "functional: tests using in-memory store (no external services)",
+    "functional: legacy marker alias for backend API integration tests",
     "e2e: end-to-end tests (Playwright, full stack)",
 ]
 filterwarnings = [
@@ -80,6 +80,9 @@ exclude_lines = [
 # ---------------------------------------------------------------------------
 # Ty — static type checking
 # ---------------------------------------------------------------------------
+[tool.ty.environment]
+python-version = "3.11"
+
 [tool.ty.rules]
 # SQLAlchemy type stubs report Column[Unknown] for model attributes, causing
 # false positives when passing model fields to typed functions.

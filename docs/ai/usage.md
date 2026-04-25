@@ -30,6 +30,22 @@ This document records the use of AI-assisted tools in the development of NEWSRAD
 | Documentation (testing.md, quality.md, cicd.md) | opencode (mimo-v2-pro-free) | `docs/ai/prompts/cicd-setup.md` |
 | sonar-project.properties | opencode (mimo-v2-pro-free) | `docs/ai/prompts/cicd-setup.md` |
 
+### Local Development and Elasticsearch Hardening (Sprint 4)
+
+| Artifact | AI Tool | Prompt Location |
+|---|---|---|
+| Backend startup and RSS/Elasticsearch fixes | opencode (gpt-5.4-mini) | `docs/ai/prompts/local-dev-elasticsearch-hardening.md` |
+| Dev launcher script (`scripts/start-dev.sh`) | opencode (gpt-5.4-mini) | `docs/ai/prompts/local-dev-elasticsearch-hardening.md` |
+| Local Elasticsearch Docker Compose tuning | opencode (gpt-5.4-mini) | `docs/ai/prompts/local-dev-elasticsearch-hardening.md` |
+| GitHub workflow `uv` migration | opencode (gpt-5.4-mini) | `docs/ai/prompts/local-dev-elasticsearch-hardening.md` |
+
+### Merge Conflict Resolution (Sprint 4)
+
+| Artifact | AI Tool | Prompt Location |
+|---|---|---|
+| Merge conflict resolution in backend and docs | opencode (mimo-v2-pro-free) | `docs/ai/prompts/merge-conflict-resolution.md` |
+| Backend structure reconciliation after merge | opencode (mimo-v2-pro-free) | `docs/ai/prompts/merge-conflict-resolution.md` |
+
 ---
 
 ## Policy

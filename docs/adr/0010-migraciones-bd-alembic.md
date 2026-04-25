@@ -1,91 +1,44 @@
-# ADR 0010: Migraciones de base de datos con Alembic
+# ADR 0010: Migraciones de base de datos (Alembic)
 
 - **Estado:** Aceptado
-- **Fecha:** 2026-04-13
+- **Fecha:** 2026-03-25
 - **Autores:** Equipo DevOps (Konstantin Rannev, Álvaro Rodriguez)
 - **Reemplaza a:** —
 - **Reemplazado por:** —
-- **Relacionado con:** [ADR 0004](0004-persistencia-postgresql.md)
+- **Relacionado con:** [ADR 0004](0004-persistencia-en-memoria.md)
 
 ---
 
-## Contexto
+## Nota de supersesión
 
-Tras el retorno a PostgreSQL documentado en el [ADR 0004](0004-persistencia-postgresql.md),
-el proyecto necesita un mecanismo para evolucionar el esquema de la base de
-datos entre versiones sin perder los datos existentes en cada entorno.
+Este ADR queda **obsoleto** a raíz de la decisión documentada en el ADR 0004
+(revisado el 2026-04-08): el proyecto no utiliza PostgreSQL ni SQLAlchemy
+para la persistencia de entidades, adoptando en su lugar estructuras de datos
+en memoria.
 
-Durante el desarrollo local y en los tests funcionales las tablas se crean
-al arrancar el backend mediante `Base.metadata.create_all(bind=engine)`, lo
-que es aceptable para entornos efímeros pero inadecuado para producción,
-donde los despliegues sucesivos del Sprint 6 deben preservar los datos ya
-cargados.
+Al no existir base de datos relacional que gestionar, **Alembic deja de ser
+necesario**. Los ficheros de configuración (`alembic.ini`, `alembic/env.py`,
+`alembic/versions/`) pueden mantenerse en el repositorio como referencia
+histórica o eliminarse en un sprint posterior.
 
-## Decisión
+---
 
-Se adopta **Alembic** como herramienta oficial de migraciones de esquema
-para PostgreSQL, configurado en [Backend/alembic/](../../Backend/alembic/)
-con `alembic.ini`, `alembic/env.py` y el directorio `alembic/versions/`.
+## Contenido original (archivado)
 
-El flujo previsto es:
+### Contexto (original)
 
-```bash
-# Generar una nueva migración a partir de los modelos actuales
-cd Backend && alembic revision --autogenerate -m "<descripción>"
+En el ADR 0004 original se documentó que la creación inicial de tablas se
+realiza con `Base.metadata.create_all()` en el startup de FastAPI, señalando
+que Alembic sería necesario para gestionar cambios de esquema en producción
+sin pérdida de datos.
 
-# Aplicar las migraciones pendientes a la base de datos
-cd Backend && alembic upgrade head
-```
+### Decisión original
 
-## Justificación
+Configurar Alembic como sistema de migraciones de esquema para PostgreSQL,
+con soporte asíncrono mediante `asyncpg`.
 
-- **Integración nativa con SQLAlchemy:** reutiliza las definiciones de
-  modelos ya existentes en `app/models/models.py`.
-- **Autogeneración de migraciones:** reduce el error humano al derivar los
-  cambios de esquema directamente del código ORM.
-- **Versionado y reversibilidad:** cada migración queda como un artefacto
-  numerado en `alembic/versions/`, aplicable y revertible.
+### Por qué se descartó
 
-## Consecuencias
-
-### Positivas
-- Despliegues seguros en el Sprint 6: el esquema se actualiza sin destruir
-  los datos.
-- Trazabilidad: cada cambio de esquema queda registrado en el repositorio.
-
-### Negativas / riesgos
-- Mientras no se corrijan los defectos listados abajo, Alembic **no es
-  operativo**: cualquier invocación de `alembic revision --autogenerate` o
-  `alembic upgrade head` falla.
-
-## Estado actual
-
-Alembic está instalado como dependencia de desarrollo (`requirements-dev.txt`)
-y los ficheros de configuración están presentes en el repositorio, pero la
-configuración **no es ejecutable** por los siguientes defectos conocidos:
-
-1. **Import roto en [Backend/alembic/env.py](../../Backend/alembic/env.py)**:
-   la línea 7 hace `from app.db.models import Role, User`, pero los modelos
-   reales viven en `app/models/models.py`. El módulo `app/db/models` no existe.
-2. **Migración inicial desfasada**:
-   [Backend/alembic/versions/0001_initial_schema.py](../../Backend/alembic/versions/0001_initial_schema.py)
-   crea una tabla `usuarios` con columnas en español (`nombre`, `apellidos`,
-   `organizacion`, `rol`), que no se corresponde con los modelos actuales
-   (`users`, `roles`, `alerts`, `notifications`, etc.).
-
-Mientras tanto, el arranque en desarrollo y tests sigue usando
-`Base.metadata.create_all(bind=engine)` en `app/main.py`, y Alembic **no
-está invocado** desde el Makefile, los workflows de GitHub Actions ni los
-scripts de despliegue.
-
-## Trabajo pendiente
-
-Antes del Sprint 6 (despliegue con un único comando) deben completarse:
-
-- [ ] Corregir el import de `Backend/alembic/env.py` para apuntar a
-      `app.models.models` e importar todos los modelos.
-- [ ] Regenerar `0001_initial_schema.py` con
-      `alembic revision --autogenerate -m "initial schema"` sobre los modelos
-      actuales (eliminando la migración antigua de `usuarios`).
-- [ ] Integrar `alembic upgrade head` en el flujo de despliegue (script o
-      Makefile) para sustituir a `create_all()` en producción.
+La decisión de eliminar PostgreSQL (ADR 0004, 2026-04-08) hace que el problema
+que Alembic resolvía —versionar cambios de esquema en una base de datos
+relacional— deje de existir. No hay esquema que migrar.

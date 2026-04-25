@@ -17,7 +17,7 @@ from passlib.context import CryptContext
 env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-SECRET_KEY = os.getenv("SECRET_KEY")
+SECRET_KEY = os.getenv("SECRET_KEY", "newsradar_secret_key_temporal")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 VERIFICATION_TOKEN_EXPIRE_HOURS = 24
@@ -59,7 +59,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def create_verification_token(email: str) -> str:
     """Genera un JWT de verificación de email con validez limitada."""
     expire = datetime.now(UTC) + timedelta(hours=VERIFICATION_TOKEN_EXPIRE_HOURS)
-    to_encode = {"exp": expire, "sub": email}
+    to_encode = {"exp": expire, "sub": email, "type": "email_verification"}
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
