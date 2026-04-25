@@ -8,7 +8,7 @@ Sistema de monitorización de noticias — UC3M Desarrollo y Operación de Siste
 |---|---|
 | Backend | FastAPI + Python 3.11 |
 | Frontend | React 19 + Vite |
-| Database | PostgreSQL 15 + SQLAlchemy 2.0 (async) |
+| Database | PostgreSQL 15 + SQLAlchemy 2.0 (sync) |
 | Search | Elasticsearch 8.12 |
 | Deployment | Docker / Docker Compose |
 | CI/CD | GitHub Actions |
@@ -100,13 +100,13 @@ Architecture decisions are documented in [docs/adr/](docs/adr/):
 | [0001](docs/adr/0001-framework-backend-fastapi.md) | Framework backend: FastAPI + Pydantic V2 |
 | [0002](docs/adr/0002-autenticacion-jwt.md) | Autenticación: JWT stateless |
 | [0003](docs/adr/0003-verificacion-email-smtplib-mailtrap.md) | Email: smtplib + Mailtrap |
-| [0004](docs/adr/0004-persistencia-en-memoria.md) | ORM: SQLAlchemy 2.0 async + PostgreSQL 15 |
+| [0004](docs/adr/0004-persistencia-postgresql.md) | Persistencia: PostgreSQL 15 + SQLAlchemy 2.0 síncrono |
 | [0005](docs/adr/0005-frontend-react-vite.md) | Frontend: React 19 + Vite |
 | [0006](docs/adr/0006-elasticsearch-indexacion-noticias.md) | Búsqueda: Elasticsearch 8.12 |
 | [0007](docs/adr/0007-frontend-bootstrap-react-router.md) | UI: Bootstrap 5 + React Router |
 | [0008](docs/adr/0008-calidad-codigo-ruff-ty.md) | Calidad: Ruff + Ty |
 | [0009](docs/adr/0009-estrategia-testing-pytest-vitest-playwright.md) | Testing: Pytest + Vitest + Playwright |
-| [0010](docs/adr/0010-migraciones-bd-alembic-(obsoleto).md) | Migraciones: Alembic |
+| [0010](docs/adr/0010-migraciones-bd-alembic.md) | Migraciones: Alembic |
 | [0011](docs/adr/0011-pipeline-cicd-github-actions.md) | CI/CD: GitHub Actions |
 | [0012](docs/adr/0012-seguridad-scanning-pip-audit-trivy-sonarqube.md) | Seguridad: pip-audit + Trivy + SonarQube |
 | [0013](docs/adr/0013-documentacion-backend-mkdocs-docstrings.md) | Documentación backend: docstrings + MkDocs |

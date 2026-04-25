@@ -35,13 +35,13 @@ nav:
       - 0001 Framework backend FastAPI: adr/0001-framework-backend-fastapi.md
       - 0002 Autenticación JWT: adr/0002-autenticacion-jwt.md
       - 0003 Verificación email con Mailtrap: adr/0003-verificacion-email-smtplib-mailtrap.md
-      - 0004 Persistencia en memoria: adr/0004-persistencia-en-memoria.md
+      - 0004 Persistencia PostgreSQL: adr/0004-persistencia-postgresql.md
       - 0005 Frontend React + Vite: adr/0005-frontend-react-vite.md
       - 0006 Elasticsearch indexación noticias: adr/0006-elasticsearch-indexacion-noticias.md
       - 0007 Frontend Bootstrap + React Router: adr/0007-frontend-bootstrap-react-router.md
       - 0008 Calidad Ruff + Ty: adr/0008-calidad-codigo-ruff-ty.md
       - 0009 Estrategia de testing: adr/0009-estrategia-testing-pytest-vitest-playwright.md
-      - 0010 Migraciones Alembic (obsoleto): adr/0010-migraciones-bd-alembic-(obsoleto).md
+      - 0010 Migraciones Alembic: adr/0010-migraciones-bd-alembic.md
       - 0011 Pipeline CI/CD: adr/0011-pipeline-cicd-github-actions.md
       - 0012 Seguridad scanning: adr/0012-seguridad-scanning-pip-audit-trivy-sonarqube.md
       - 0013 Documentación backend con MkDocs: adr/0013-documentacion-backend-mkdocs-docstrings.md

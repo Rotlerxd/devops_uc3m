@@ -22,7 +22,7 @@ contenedores Docker.
 del sistema (usuarios, alertas, fuentes, roles) se almacenan en **memoria**
 mediante estructuras `dict` de Python. Elasticsearch sigue siendo el único
 sistema con persistencia real en disco, exclusivamente para las noticias
-indexadas. Ver [ADR 0004](adr/0004-persistencia-en-memoria.md).
+indexadas. Ver [ADR 0004](adr/0004-persistencia-postgresql.md).
 
 ---
 
@@ -75,7 +75,7 @@ indexadas. Ver [ADR 0004](adr/0004-persistencia-en-memoria.md).
 
 > **Nota:** PostgreSQL no forma parte de la arquitectura del proyecto.
 > Las entidades del sistema se mantienen en memoria dentro del proceso del
-> backend. Ver [ADR 0004](adr/0004-persistencia-en-memoria.md).
+> backend. Ver [ADR 0004](adr/0004-persistencia-postgresql.md).
 
 ```
 ┌────────────────────────────────────────────────────────┐
@@ -164,13 +164,13 @@ Backend API (FastAPI — app/main.py)
 | [0001](adr/0001-framework-backend-fastapi.md) | Framework backend: FastAPI + Pydantic V2 | Aceptado |
 | [0002](adr/0002-autenticacion-jwt.md) | Autenticación: JWT stateless | Aceptado |
 | [0003](adr/0003-verificacion-email-smtplib-mailtrap.md) | Email: smtplib + Mailtrap | Aceptado |
-| [0004](adr/0004-persistencia-en-memoria.md) | Persistencia: in-memory stores (Python dict) | Aceptado |
+| [0004](adr/0004-persistencia-postgresql.md) | Persistencia: in-memory stores (Python dict) | Aceptado |
 | [0005](adr/0005-frontend-react-vite.md) | Frontend: React 19 + Vite | Aceptado |
 | [0006](adr/0006-elasticsearch-indexacion-noticias.md) | Motor de búsqueda: Elasticsearch 8.12 | Aceptado |
 | [0007](adr/0007-frontend-bootstrap-react-router.md) | UI: Bootstrap 5 + React Router | Aceptado |
 | [0008](adr/0008-calidad-codigo-ruff-ty.md) | Calidad: Ruff + Ty | Aceptado |
 | [0009](adr/0009-estrategia-testing-pytest-vitest-playwright.md) | Testing: Pytest + Vitest + Playwright | Aceptado |
-| [0010](adr/0010-migraciones-bd-alembic-(obsoleto).md) | ~~Migraciones: Alembic~~ | Supersedido por ADR 0004 |
+| [0010](adr/0010-migraciones-bd-alembic.md) | ~~Migraciones: Alembic~~ | Supersedido por ADR 0004 |
 | [0011](adr/0011-pipeline-cicd-github-actions.md) | CI/CD: GitHub Actions | Aceptado |
 | [0012](adr/0012-seguridad-scanning-pip-audit-trivy-sonarqube.md) | Seguridad: pip-audit + Trivy + SonarQube | Aceptado |
 | [0013](adr/0013-documentacion-backend-mkdocs-docstrings.md) | Documentación backend: docstrings + MkDocs | Aceptado |
