@@ -44,7 +44,7 @@ nav:
       - 0007 Frontend Bootstrap + React Router: adr/0007-frontend-bootstrap-react-router.md
       - 0008 Calidad Ruff + Ty: adr/0008-calidad-codigo-ruff-ty.md
       - 0009 Estrategia de testing: adr/0009-estrategia-testing-pytest-vitest-playwright.md
-      - 0010 Migraciones Alembic (obsoleto): adr/0010-migraciones-bd-alembic-(obsoleto).md
+      - 0010 Migraciones Alembic: adr/0010-migraciones-bd-alembic.md
       - 0011 Pipeline CI/CD: adr/0011-pipeline-cicd-github-actions.md
       - 0012 Seguridad scanning: adr/0012-seguridad-scanning-pip-audit-trivy-sonarqube.md
       - 0013 Documentación backend con MkDocs: adr/0013-documentacion-backend-mkdocs-docstrings.md

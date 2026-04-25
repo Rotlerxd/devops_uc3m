@@ -26,7 +26,7 @@ reproducibles.
 Se decide adoptar de forma explícita:
 
 - **PostgreSQL 15** como persistencia principal de entidades del backend.
-- **SQLAlchemy 2.0** con modelos tipados (`Mapped[...]`, `mapped_column(...)`).
+- **SQLAlchemy 2.0** con modelos tipados (`Mapped[...]`, `mapped_column(...)`), en modo **síncrono** (no async).
 - **Alembic** como única fuente de verdad para la creación y evolución del esquema.
 - **JWT stateless** para autenticación, sin almacenamiento de sesiones en memoria.
 

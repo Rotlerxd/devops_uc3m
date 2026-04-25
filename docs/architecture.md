@@ -157,7 +157,7 @@ Backend API (FastAPI — app/main.py)
 | [0007](adr/0007-frontend-bootstrap-react-router.md) | UI: Bootstrap 5 + React Router | Aceptado |
 | [0008](adr/0008-calidad-codigo-ruff-ty.md) | Calidad: Ruff + Ty | Aceptado |
 | [0009](adr/0009-estrategia-testing-pytest-vitest-playwright.md) | Testing: Pytest + Vitest + Playwright | Aceptado |
-| [0010](adr/0010-migraciones-bd-alembic-(obsoleto).md) | Migraciones: Alembic (histórico) | Histórico |
+| [0010](adr/0010-migraciones-bd-alembic.md) | Migraciones: Alembic | Histórico |
 | [0011](adr/0011-pipeline-cicd-github-actions.md) | CI/CD: GitHub Actions | Aceptado |
 | [0012](adr/0012-seguridad-scanning-pip-audit-trivy-sonarqube.md) | Seguridad: pip-audit + Trivy + SonarQube | Aceptado |
 | [0013](adr/0013-documentacion-backend-mkdocs-docstrings.md) | Documentación backend: docstrings + MkDocs | Aceptado |

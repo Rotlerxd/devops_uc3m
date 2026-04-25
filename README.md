@@ -108,7 +108,7 @@ Architecture decisions are documented in [docs/adr/](docs/adr/):
 | [0007](docs/adr/0007-frontend-bootstrap-react-router.md) | UI: Bootstrap 5 + React Router |
 | [0008](docs/adr/0008-calidad-codigo-ruff-ty.md) | Calidad: Ruff + Ty |
 | [0009](docs/adr/0009-estrategia-testing-pytest-vitest-playwright.md) | Testing: Pytest + Vitest + Playwright |
-| [0010](docs/adr/0010-migraciones-bd-alembic-(obsoleto).md) | Migraciones: Alembic |
+| [0010](docs/adr/0010-migraciones-bd-alembic.md) | Migraciones: Alembic |
 | [0011](docs/adr/0011-pipeline-cicd-github-actions.md) | CI/CD: GitHub Actions |
 | [0012](docs/adr/0012-seguridad-scanning-pip-audit-trivy-sonarqube.md) | Seguridad: pip-audit + Trivy + SonarQube |
 | [0013](docs/adr/0013-documentacion-backend-mkdocs-docstrings.md) | Documentación backend: docstrings + MkDocs |
