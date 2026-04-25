@@ -8,7 +8,7 @@ Sistema de monitorización de noticias — UC3M Desarrollo y Operación de Siste
 |---|---|
 | Backend | FastAPI + Python 3.11 |
 | Frontend | React 19 + Vite |
-| Database | PostgreSQL 15 + SQLAlchemy 2.0 (async) |
+| Database | PostgreSQL 15 + SQLAlchemy 2.0 (sync) |
 | Search | Elasticsearch 8.12 |
 | Deployment | Docker / Docker Compose |
 | CI/CD | GitHub Actions |
