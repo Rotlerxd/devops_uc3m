@@ -14,7 +14,7 @@ import feedparser
 import requests
 from dotenv import load_dotenv
 from elasticsearch import Elasticsearch
-from fastapi import Depends, FastAPI, HTTPException, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
@@ -31,6 +31,14 @@ from app.core.security import (
     send_alert_email,
     send_verification_email,
     verify_password,
+)
+from app.core.synonyms import (
+    DEFAULT_LANGUAGE,
+    DEFAULT_SYNONYM_LIMIT,
+    MAX_SYNONYM_LIMIT,
+    MIN_SYNONYM_LIMIT,
+    SynonymDataNotAvailableError,
+    generate_synonyms,
 )
 from app.db.database import SessionLocal, get_db
 from app.models import models as db_models
@@ -340,6 +348,13 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class SynonymResponse(BaseModel):
+    term: str
+    language: str = DEFAULT_LANGUAGE
+    limit: int
+    synonyms: list[str] = Field(default_factory=list)
+
+
 def ensure_role_ids_exist(role_ids: list[int], db: Session = Depends(get_db)) -> None:
     """Verifica en PostgreSQL que los IDs de roles proporcionados existen."""
     if not role_ids:
@@ -541,6 +556,21 @@ def create_seed_data() -> None:
 def health() -> dict:
     """Devuelve estado de salud básico del servicio."""
     return {"status": "ok", "timestamp": datetime.now(UTC).isoformat()}
+
+
+@app.get(f"{API_PREFIX}/alerts/synonyms", response_model=SynonymResponse, tags=["alerts"])
+async def get_alert_synonyms(
+    term: str = Query(..., min_length=1, max_length=120),
+    limit: int = Query(DEFAULT_SYNONYM_LIMIT, ge=MIN_SYNONYM_LIMIT, le=MAX_SYNONYM_LIMIT),
+    _: db_models.User = Depends(get_current_user),
+) -> SynonymResponse:
+    """Genera sinónimos locales en español para descriptores de alertas."""
+    try:
+        synonyms = generate_synonyms(term=term, limit=limit, language=DEFAULT_LANGUAGE)
+    except SynonymDataNotAvailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return SynonymResponse(term=term.strip(), language=DEFAULT_LANGUAGE, limit=limit, synonyms=synonyms)
 
 
 @app.post(f"{API_PREFIX}/auth/login", response_model=TokenResponse, tags=["auth"])

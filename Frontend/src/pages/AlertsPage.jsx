@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { getAlerts, createAlert, deleteAlert } from '../services/alertsService';
+import { getAlerts, createAlert, deleteAlert, generateSynonyms } from '../services/alertsService';
 import { getCategories } from '../services/sourcesService';
 
 // Presets comunes de expresión cron para el motor de captura RSS (Sprint 3.1)
@@ -22,6 +22,7 @@ export default function AlertsPage() {
   const [categories, setCategories] = useState([]);
   const [error, setError] = useState(null);
   const [showModal, setShowModal] = useState(false);
+  const [synonymLoading, setSynonymLoading] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -117,6 +118,32 @@ export default function AlertsPage() {
       fetchAlerts();
     } catch (err) {
       setError(err.message);
+    }
+  };
+
+  const handleGenerateSynonyms = async () => {
+    setError(null);
+    const baseTerm = formData.descriptors
+      .split(',')
+      .map((d) => d.trim())
+      .filter((d) => d !== '')[0];
+
+    if (!baseTerm) {
+      return setError('Introduce un término base para generar sinónimos.');
+    }
+
+    setSynonymLoading(true);
+    try {
+      const data = await generateSynonyms(token, baseTerm, 10);
+      if (!data.synonyms || data.synonyms.length < 3) {
+        return setError(`No se encontraron suficientes sinónimos para "${baseTerm}".`);
+      }
+
+      setFormData({ ...formData, descriptors: data.synonyms.join(', ') });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSynonymLoading(false);
     }
   };
 
@@ -228,14 +255,24 @@ export default function AlertsPage() {
 
                   <div className="mb-3">
                     <label className="form-label">DESCRIPTORES / PALABRAS CLAVE (separados por coma)</label>
-                    <input
-                      type="text"
-                      className="form-control bg-light"
-                      placeholder="IA, ROBÓTICA, CHIPS"
-                      value={formData.descriptors}
-                      onChange={(e) => setFormData({ ...formData, descriptors: e.target.value })}
-                      required
-                    />
+                    <div className="input-group">
+                      <input
+                        type="text"
+                        className="form-control bg-light"
+                        placeholder="IA, ROBÓTICA, CHIPS"
+                        value={formData.descriptors}
+                        onChange={(e) => setFormData({ ...formData, descriptors: e.target.value })}
+                        required
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-outline-dark"
+                        onClick={handleGenerateSynonyms}
+                        disabled={synonymLoading}
+                      >
+                        {synonymLoading ? 'GENERANDO...' : 'GENERAR SINÓNIMOS'}
+                      </button>
+                    </div>
                     <small className="text-muted">Introduce entre 3 y 10 palabras.</small>
                   </div>
 

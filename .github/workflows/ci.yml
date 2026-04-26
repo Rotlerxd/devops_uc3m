@@ -68,6 +68,8 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: uv pip install --system -r Backend/requirements.txt -r Backend/requirements-dev.txt
+      - name: Install NLTK data
+        run: python -m nltk.downloader -q wordnet omw-1.4
       - name: Run unit tests
         run: |
           cd Backend
@@ -113,6 +115,8 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: uv pip install --system -r Backend/requirements.txt -r Backend/requirements-dev.txt
+      - name: Install NLTK data
+        run: python -m nltk.downloader -q wordnet omw-1.4
       - name: Run migrations
         run: |
           cd Backend
@@ -302,6 +306,7 @@ jobs:
       - name: Install test deps and generate coverage
         run: |
           uv pip install --system -r Backend/requirements.txt -r Backend/requirements-dev.txt
+          python -m nltk.downloader -q wordnet omw-1.4
           cd Backend && pytest tests/unit tests/functional -m "unit or functional" \
             --cov=app --cov-report=xml:../coverage.xml --tb=short || true
 
