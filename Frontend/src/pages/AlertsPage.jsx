@@ -3,6 +3,9 @@ import { Link } from 'react-router-dom';
 import { getAlerts, createAlert, deleteAlert, generateSynonyms } from '../services/alertsService';
 import { getCategories } from '../services/sourcesService';
 
+const MIN_DESCRIPTORS = 3;
+const MAX_DESCRIPTORS = 10;
+
 // Presets comunes de expresión cron para el motor de captura RSS (Sprint 3.1)
 const CRON_PRESETS = [
   { label: 'Cada 15 minutos', value: '*/15 * * * *' },
@@ -23,6 +26,7 @@ export default function AlertsPage() {
   const [error, setError] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [synonymLoading, setSynonymLoading] = useState(false);
+  const [synonymSuggestions, setSynonymSuggestions] = useState([]);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -31,6 +35,26 @@ export default function AlertsPage() {
     cron_expression: '0 0 * * *',
     category_ids: [],
   });
+
+  const parseDescriptors = (descriptorsRaw) => {
+    const parsedDescriptors = descriptorsRaw
+      .split(',')
+      .map((descriptor) => descriptor.trim())
+      .filter((descriptor) => descriptor !== '');
+
+    const dedupedDescriptors = [];
+    const seen = new Set();
+    parsedDescriptors.forEach((descriptor) => {
+      const normalizedDescriptor = descriptor.toLowerCase();
+      if (!seen.has(normalizedDescriptor)) {
+        seen.add(normalizedDescriptor);
+        dedupedDescriptors.push(descriptor);
+      }
+    });
+    return dedupedDescriptors;
+  };
+
+  const descriptorsList = parseDescriptors(formData.descriptors);
 
   const fetchAlerts = async () => {
     try {
@@ -76,15 +100,12 @@ export default function AlertsPage() {
     e.preventDefault();
     setError(null);
 
-    const parsedDescriptors = formData.descriptors
-      .split(',')
-      .map((d) => d.trim())
-      .filter((d) => d !== '');
+    const parsedDescriptors = parseDescriptors(formData.descriptors);
 
     if (alerts.length >= 20) {
       return setError('Límite máximo de 20 alertas alcanzado.');
     }
-    if (parsedDescriptors.length < 3 || parsedDescriptors.length > 10) {
+    if (parsedDescriptors.length < MIN_DESCRIPTORS || parsedDescriptors.length > MAX_DESCRIPTORS) {
       return setError('Debes incluir entre 3 y 10 descriptores separados por coma.');
     }
     if (!formData.cron_expression.trim()) {
@@ -115,6 +136,7 @@ export default function AlertsPage() {
         cron_expression: '0 0 * * *',
         category_ids: [],
       });
+      setSynonymSuggestions([]);
       fetchAlerts();
     } catch (err) {
       setError(err.message);
@@ -123,28 +145,50 @@ export default function AlertsPage() {
 
   const handleGenerateSynonyms = async () => {
     setError(null);
-    const baseTerm = formData.descriptors
-      .split(',')
-      .map((d) => d.trim())
-      .filter((d) => d !== '')[0];
-
-    if (!baseTerm) {
-      return setError('Introduce un término base para generar sinónimos.');
+    if (descriptorsList.length === 0) {
+      return setError('Introduce al menos un descriptor para generar sinónimos.');
     }
 
     setSynonymLoading(true);
     try {
-      const data = await generateSynonyms(token, baseTerm, 10);
-      if (!data.synonyms || data.synonyms.length < 3) {
-        return setError(`No se encontraron suficientes sinónimos para "${baseTerm}".`);
-      }
+      const suggestionsByDescriptor = await Promise.all(
+        descriptorsList.map(async (descriptor) => {
+          const data = await generateSynonyms(token, descriptor, MAX_DESCRIPTORS);
+          return {
+            descriptor,
+            synonyms: data.synonyms || [],
+          };
+        })
+      );
 
-      setFormData({ ...formData, descriptors: data.synonyms.join(', ') });
+      setSynonymSuggestions(suggestionsByDescriptor);
+      const hasAnySynonym = suggestionsByDescriptor.some((group) => group.synonyms.length > 0);
+      if (!hasAnySynonym) {
+        setError('No se encontraron sinónimos para los descriptores indicados.');
+      }
     } catch (err) {
       setError(err.message);
     } finally {
       setSynonymLoading(false);
     }
+  };
+
+  const handleAddSynonym = (synonym) => {
+    setError(null);
+    const normalizedSynonym = synonym.toLowerCase();
+    const descriptorSet = new Set(descriptorsList.map((descriptor) => descriptor.toLowerCase()));
+
+    if (descriptorSet.has(normalizedSynonym)) {
+      return;
+    }
+
+    if (descriptorsList.length >= MAX_DESCRIPTORS) {
+      setError('Ya tienes 10 descriptores. Elimina uno antes de añadir más.');
+      return;
+    }
+
+    const nextDescriptors = [...descriptorsList, synonym];
+    setFormData({ ...formData, descriptors: nextDescriptors.join(', ') });
   };
 
   const handleDelete = async (alertId) => {
@@ -158,7 +202,11 @@ export default function AlertsPage() {
   };
 
   const openModal = () => { setError(null); setShowModal(true); };
-  const closeModal = () => { setError(null); setShowModal(false); };
+  const closeModal = () => {
+    setError(null);
+    setSynonymSuggestions([]);
+    setShowModal(false);
+  };
 
   return (
     <div className="container mt-4">
@@ -261,7 +309,10 @@ export default function AlertsPage() {
                         className="form-control bg-light"
                         placeholder="IA, ROBÓTICA, CHIPS"
                         value={formData.descriptors}
-                        onChange={(e) => setFormData({ ...formData, descriptors: e.target.value })}
+                        onChange={(e) => {
+                          setFormData({ ...formData, descriptors: e.target.value });
+                          setSynonymSuggestions([]);
+                        }}
                         required
                       />
                       <button
@@ -273,8 +324,43 @@ export default function AlertsPage() {
                         {synonymLoading ? 'GENERANDO...' : 'GENERAR SINÓNIMOS'}
                       </button>
                     </div>
-                    <small className="text-muted">Introduce entre 3 y 10 palabras.</small>
+                    <small className="text-muted">
+                      Introduce entre 3 y 10 palabras. ({descriptorsList.length}/{MAX_DESCRIPTORS})
+                    </small>
                   </div>
+
+                  {synonymSuggestions.length > 0 && (
+                    <div className="mb-3">
+                      <label className="form-label">SUGERENCIAS DE SINÓNIMOS</label>
+                      {synonymSuggestions.map((group) => (
+                        <div key={group.descriptor} className="mb-2">
+                          <div className="small text-muted mb-1">{group.descriptor}</div>
+                          {group.synonyms.length === 0 ? (
+                            <div className="small text-muted">No se encontraron sinónimos.</div>
+                          ) : (
+                            <div className="d-flex flex-wrap gap-2">
+                              {group.synonyms.map((synonym) => {
+                                const alreadySelected = descriptorsList
+                                  .map((descriptor) => descriptor.toLowerCase())
+                                  .includes(synonym.toLowerCase());
+                                return (
+                                  <button
+                                    type="button"
+                                    key={`${group.descriptor}-${synonym}`}
+                                    className={`btn btn-sm ${alreadySelected ? 'btn-secondary' : 'btn-outline-secondary'}`}
+                                    onClick={() => handleAddSynonym(synonym)}
+                                    disabled={alreadySelected}
+                                  >
+                                    {synonym}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
                   <div className="row">
                     <div className="col-md-6 mb-3">

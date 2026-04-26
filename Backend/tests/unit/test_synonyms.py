@@ -24,6 +24,15 @@ class FakeWordNet:
         return self._synsets
 
 
+class MapWordNet:
+    def __init__(self, mapping: dict[str, list[FakeSynset]]) -> None:
+        self.mapping = mapping
+
+    def synsets(self, term: str, lang: str) -> list[FakeSynset]:
+        assert lang == "spa"
+        return self.mapping.get(term, [])
+
+
 @pytest.mark.unit
 def test_spanish_synonym_lookup_returns_clean_results():
     result = synonyms.generate_synonyms("coche", limit=10)
@@ -82,3 +91,35 @@ def test_no_results_returns_empty_list(monkeypatch):
     monkeypatch.setattr(synonyms, "wordnet", fake_wordnet)
 
     assert synonyms.generate_synonyms("casa", limit=10) == []
+
+
+@pytest.mark.unit
+def test_fallback_for_ia_when_wordnet_has_no_results(monkeypatch):
+    fake_wordnet = MapWordNet({})
+    monkeypatch.setattr(synonyms, "wordnet", fake_wordnet)
+    monkeypatch.setattr(
+        synonyms,
+        "FALLBACK_SYNONYMS",
+        {"ia": ["inteligencia artificial", "aprendizaje automático", "ia"]},
+    )
+
+    result = synonyms.generate_synonyms("IA", limit=10)
+
+    assert result == ["inteligencia artificial", "aprendizaje automático"]
+
+
+@pytest.mark.unit
+def test_phrase_decomposition_for_multiword_terms(monkeypatch):
+    fake_wordnet = MapWordNet(
+        {
+            "inteligencia_artificial": [],
+            "inteligencia": [FakeSynset(["capacidad", "razón"])],
+            "artificial": [FakeSynset(["falso"])],
+        }
+    )
+    monkeypatch.setattr(synonyms, "wordnet", fake_wordnet)
+    monkeypatch.setattr(synonyms, "FALLBACK_SYNONYMS", {})
+
+    result = synonyms.generate_synonyms("inteligencia artificial", limit=10)
+
+    assert result == ["capacidad", "razón", "falso"]

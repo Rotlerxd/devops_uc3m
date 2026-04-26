@@ -11,6 +11,10 @@ DEFAULT_LANGUAGE = "spa"
 MIN_SYNONYM_LIMIT = 3
 MAX_SYNONYM_LIMIT = 10
 DEFAULT_SYNONYM_LIMIT = MAX_SYNONYM_LIMIT
+FALLBACK_SYNONYMS: dict[str, list[str]] = {
+    "ia": ["inteligencia artificial", "aprendizaje automático", "ai"],
+    "inteligencia artificial": ["ia", "aprendizaje automático", "ai"],
+}
 
 
 class SynonymDataNotAvailableError(RuntimeError):
@@ -41,18 +45,35 @@ def generate_synonyms(term: str, limit: int = DEFAULT_SYNONYM_LIMIT, language: s
     synonyms: list[str] = []
     seen: set[str] = set()
 
-    for lookup_term in lookup_terms:
-        for synset in _synsets_for(lookup_term, language):
-            for lemma in synset.lemma_names(lang=language):
-                synonym = normalize_text(lemma)
-                if not synonym or synonym in excluded_terms or synonym in seen:
-                    continue
+    _append_wordnet_synonyms(
+        lookup_terms=lookup_terms,
+        language=language,
+        excluded_terms=excluded_terms,
+        seen=seen,
+        synonyms=synonyms,
+        max_results=max_results,
+    )
 
-                synonyms.append(synonym)
-                seen.add(synonym)
+    # Para frases compuestas sin entrada directa en WordNet, intentamos con cada token.
+    if len(synonyms) < max_results and " " in normalized_term:
+        phrase_tokens = [token for token in normalized_term.split(" ") if token]
+        _append_wordnet_synonyms(
+            lookup_terms=phrase_tokens,
+            language=language,
+            excluded_terms=excluded_terms,
+            seen=seen,
+            synonyms=synonyms,
+            max_results=max_results,
+        )
 
-                if len(synonyms) >= max_results:
-                    return synonyms
+    if len(synonyms) < max_results:
+        _append_fallback_synonyms(
+            term=normalized_term,
+            excluded_terms=excluded_terms,
+            seen=seen,
+            synonyms=synonyms,
+            max_results=max_results,
+        )
 
     return synonyms
 
@@ -84,3 +105,62 @@ def _lookup_terms(term: str) -> list[str]:
             seen.add(candidate)
 
     return deduped
+
+
+def _append_wordnet_synonyms(
+    lookup_terms: list[str],
+    language: str,
+    excluded_terms: set[str],
+    seen: set[str],
+    synonyms: list[str],
+    max_results: int,
+) -> None:
+    for lookup_term in lookup_terms:
+        for synset in _synsets_for(lookup_term, language):
+            for lemma in synset.lemma_names(lang=language):
+                _append_synonym_candidate(
+                    candidate=lemma,
+                    excluded_terms=excluded_terms,
+                    seen=seen,
+                    synonyms=synonyms,
+                    max_results=max_results,
+                )
+                if len(synonyms) >= max_results:
+                    return
+
+
+def _append_fallback_synonyms(
+    term: str,
+    excluded_terms: set[str],
+    seen: set[str],
+    synonyms: list[str],
+    max_results: int,
+) -> None:
+    for candidate in FALLBACK_SYNONYMS.get(term, []):
+        _append_synonym_candidate(
+            candidate=candidate,
+            excluded_terms=excluded_terms,
+            seen=seen,
+            synonyms=synonyms,
+            max_results=max_results,
+        )
+        if len(synonyms) >= max_results:
+            return
+
+
+def _append_synonym_candidate(
+    candidate: str,
+    excluded_terms: set[str],
+    seen: set[str],
+    synonyms: list[str],
+    max_results: int,
+) -> None:
+    synonym = normalize_text(candidate)
+    if not synonym or synonym in excluded_terms or synonym in seen:
+        return
+
+    synonyms.append(synonym)
+    seen.add(synonym)
+
+    if len(synonyms) >= max_results:
+        return

@@ -38,6 +38,8 @@ La lógica queda encapsulada en `app/core/synonyms.py` y aplica:
 - Normalización de espacios, guiones bajos y capitalización.
 - Búsqueda en WordNet usando el idioma `spa`.
 - Variantes simples para plurales frecuentes en castellano.
+- Fallback léxico local para alias/acrónimos frecuentes (por ejemplo `ia`).
+- Descomposición de frases en tokens cuando no hay entrada directa útil.
 - Limpieza, deduplicación y exclusión del término original.
 - Límite configurable dentro del rango soportado de 3 a 10 resultados.
 
@@ -73,6 +75,13 @@ potencialmente de pago, y añaden dependencia de red y proveedor.
 Se descartó como solución inicial porque obligaría a mantener datos léxicos
 manualmente. Puede ser una extensión futura si el dominio periodístico necesita
 sinónimos curados.
+
+### Modelo local pequeño (SmolLM2 u otros)
+
+Se mantiene fuera de alcance en esta iteración por coste operativo y huella de
+runtime (modelos, carga en memoria y latencia), además de introducir
+comportamiento menos determinista para un flujo que se beneficia de reglas
+léxicas estables.
 
 ## Consecuencias
 
