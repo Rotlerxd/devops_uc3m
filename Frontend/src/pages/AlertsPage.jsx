@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { getAlerts, createAlert, deleteAlert, generateSynonyms } from '../services/alertsService';
+import { getAlerts, createAlert, deleteAlert, generateSynonyms, warmupSynonyms } from '../services/alertsService';
 import { getCategories } from '../services/sourcesService';
 
 const MIN_DESCRIPTORS = 3;
@@ -27,6 +27,7 @@ export default function AlertsPage() {
   const [showModal, setShowModal] = useState(false);
   const [synonymLoading, setSynonymLoading] = useState(false);
   const [synonymSuggestions, setSynonymSuggestions] = useState([]);
+  const hasWarmedSynonymsRef = useRef(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -201,7 +202,22 @@ export default function AlertsPage() {
     }
   };
 
-  const openModal = () => { setError(null); setShowModal(true); };
+  const triggerSynonymWarmup = () => {
+    if (!token || hasWarmedSynonymsRef.current) {
+      return;
+    }
+    hasWarmedSynonymsRef.current = true;
+    warmupSynonyms(token).catch((err) => {
+      // El warmup no debe bloquear ni romper la UX del modal de alertas.
+      console.warn('[alerts] Synonym warmup failed:', err.message);
+    });
+  };
+
+  const openModal = () => {
+    setError(null);
+    triggerSynonymWarmup();
+    setShowModal(true);
+  };
   const closeModal = () => {
     setError(null);
     setSynonymSuggestions([]);

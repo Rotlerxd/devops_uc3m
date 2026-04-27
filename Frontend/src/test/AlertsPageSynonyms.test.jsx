@@ -4,14 +4,15 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import AlertsPage from '../pages/AlertsPage';
-import { generateSynonyms, getAlerts } from '../services/alertsService';
+import { generateSynonyms, getAlerts, warmupSynonyms } from '../services/alertsService';
 import { getCategories } from '../services/sourcesService';
 
 vi.mock('../services/alertsService', () => ({
   getAlerts: vi.fn(),
   createAlert: vi.fn(),
   deleteAlert: vi.fn(),
-  generateSynonyms: vi.fn()
+  generateSynonyms: vi.fn(),
+  warmupSynonyms: vi.fn()
 }));
 
 vi.mock('../services/sourcesService', () => ({
@@ -43,6 +44,7 @@ describe('AlertsPage synonym generation', () => {
     vi.clearAllMocks();
     getAlerts.mockResolvedValue([]);
     getCategories.mockResolvedValue([]);
+    warmupSynonyms.mockResolvedValue({ status: 'warmed' });
   });
 
   const openModal = async () => {
@@ -103,5 +105,20 @@ describe('AlertsPage synonym generation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'a-syn' }));
     expect(screen.getByText(/ya tienes 10 descriptores/i)).toBeInTheDocument();
     expect(descriptorsInput).toHaveValue(tenDescriptors);
+  });
+
+  it('triggers synonym warmup once when opening the alert modal', async () => {
+    await openModal();
+    await waitFor(() => {
+      expect(warmupSynonyms).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /cancelar/i }));
+    fireEvent.click(screen.getByRole('button', { name: /\+ nueva alerta/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/crear nueva alerta/i)).toBeInTheDocument();
+    });
+    expect(warmupSynonyms).toHaveBeenCalledTimes(1);
   });
 });

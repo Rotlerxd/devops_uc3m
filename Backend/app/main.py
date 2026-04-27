@@ -39,6 +39,7 @@ from app.core.synonyms import (
     MIN_SYNONYM_LIMIT,
     SynonymDataNotAvailableError,
     generate_synonyms,
+    warmup_synonym_resources,
 )
 from app.db.database import SessionLocal, get_db
 from app.models import models as db_models
@@ -355,6 +356,11 @@ class SynonymResponse(BaseModel):
     synonyms: list[str] = Field(default_factory=list)
 
 
+class SynonymWarmupResponse(BaseModel):
+    status: str
+    detail: str | None = None
+
+
 def ensure_role_ids_exist(role_ids: list[int], db: Session = Depends(get_db)) -> None:
     """Verifica en PostgreSQL que los IDs de roles proporcionados existen."""
     if not role_ids:
@@ -571,6 +577,13 @@ async def get_alert_synonyms(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return SynonymResponse(term=term.strip(), language=DEFAULT_LANGUAGE, limit=limit, synonyms=synonyms)
+
+
+@app.get(f"{API_PREFIX}/alerts/synonyms/warmup", response_model=SynonymWarmupResponse, tags=["alerts"])
+async def warmup_alert_synonyms(_: db_models.User = Depends(get_current_user)) -> SynonymWarmupResponse:
+    """Precarga recursos de sinónimos para evitar latencia en la primera búsqueda."""
+    status, detail = warmup_synonym_resources(language=DEFAULT_LANGUAGE)
+    return SynonymWarmupResponse(status=status, detail=detail)
 
 
 @app.post(f"{API_PREFIX}/auth/login", response_model=TokenResponse, tags=["auth"])

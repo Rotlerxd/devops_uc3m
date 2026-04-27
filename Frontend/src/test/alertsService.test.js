@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { generateSynonyms } from '../services/alertsService';
+import { generateSynonyms, warmupSynonyms } from '../services/alertsService';
 
 describe('alertsService', () => {
   afterEach(() => {
@@ -28,5 +28,20 @@ describe('alertsService', () => {
     });
 
     await expect(generateSynonyms('token-123', 'x', 3)).rejects.toThrow('No disponible');
+  });
+
+  it('calls synonym warmup endpoint with auth header', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: 'warmed' })
+    });
+
+    const result = await warmupSynonyms('token-123');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/alerts/synonyms/warmup',
+      { headers: { Authorization: 'Bearer token-123' } }
+    );
+    expect(result.status).toBe('warmed');
   });
 });

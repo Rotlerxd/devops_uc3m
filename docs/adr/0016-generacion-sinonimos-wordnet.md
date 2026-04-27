@@ -15,6 +15,9 @@ clave. Para reducir trabajo manual y mejorar la cobertura de búsquedas en
 castellano, se necesita generar sinónimos para un término base dentro del flujo
 normal de alta de alertas.
 
+Además, se observó latencia perceptible en la primera petición de sinónimos
+porque NLTK/OMW inicializa parte de los recursos de forma perezosa en memoria.
+
 La solución debía cumplir varias restricciones:
 
 - No depender de APIs externas, servicios alojados ni costes de uso.
@@ -32,6 +35,7 @@ Se decide implementar la generación de sinónimos en el backend mediante
 El backend expone un endpoint autenticado para el flujo de alertas:
 
 - `GET /api/v1/alerts/synonyms?term=<termino>&limit=<3-10>`
+- `GET /api/v1/alerts/synonyms/warmup`
 
 La lógica queda encapsulada en `app/core/synonyms.py` y aplica:
 
@@ -40,6 +44,8 @@ La lógica queda encapsulada en `app/core/synonyms.py` y aplica:
 - Variantes simples para plurales frecuentes en castellano.
 - Fallback léxico local para alias/acrónimos frecuentes (por ejemplo `ia`).
 - Descomposición de frases en tokens cuando no hay entrada directa útil.
+- Warmup idempotente en backend para precargar recursos NLTK/OMW mediante una
+  consulta inocua.
 - Limpieza, deduplicación y exclusión del término original.
 - Límite configurable dentro del rango soportado de 3 a 10 resultados.
 
@@ -55,6 +61,8 @@ La lógica queda encapsulada en `app/core/synonyms.py` y aplica:
   mediante `lang="spa"`, suficiente para el caso de uso de descriptores.
 - **Extensibilidad:** La separación en un módulo de core permite sustituir o
   enriquecer la fuente léxica más adelante sin cambiar el contrato del frontend.
+- **Mejor UX inicial:** El warmup reduce la latencia visible de la primera
+  generación de sinónimos sin bloquear el flujo de creación de alertas.
 
 ## Alternativas consideradas
 
@@ -101,6 +109,8 @@ léxicas estables.
   haber términos periodísticos, nombres propios o neologismos sin resultados.
 - La lematización en castellano se mantiene deliberadamente ligera; no se añade
   una dependencia pesada de NLP para este caso de uso.
+- Se añade una llamada de warmup desde frontend al abrir el modal de alertas; es
+  no bloqueante y se ejecuta una sola vez por sesión de pantalla.
 
 ## Implicaciones de testing
 
@@ -111,9 +121,11 @@ Se añaden pruebas unitarias para:
 - Exclusión del término original.
 - Manejo del límite de resultados.
 - Comportamiento sin resultados.
+- Warmup exitoso, idempotencia y manejo de fallo sin repetir inicialización
+  costosa.
 
 También se añade una prueba funcional del endpoint del backend y una prueba del
-servicio de frontend que consume la API.
+servicio de frontend que consume la API, incluyendo el trigger de warmup.
 
 ## Implicaciones operativas
 
@@ -122,3 +134,6 @@ CI instala los mismos corpus antes de ejecutar las pruebas que los necesitan.
 
 Si los corpus no están disponibles en runtime, el backend devuelve `503` para el
 endpoint de sinónimos en lugar de fallar con un error interno.
+
+El warmup se ejecuta exclusivamente en backend. El frontend solo dispara el
+endpoint de warmup y nunca carga NLTK localmente.

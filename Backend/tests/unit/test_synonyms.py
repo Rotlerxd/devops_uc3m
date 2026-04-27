@@ -123,3 +123,69 @@ def test_phrase_decomposition_for_multiword_terms(monkeypatch):
     result = synonyms.generate_synonyms("inteligencia artificial", limit=10)
 
     assert result == ["capacidad", "razón", "falso"]
+
+
+@pytest.mark.unit
+def test_warmup_success_is_idempotent(monkeypatch):
+    call_counter = {"count": 0}
+    synonyms._reset_warmup_state_for_tests()
+
+    def fake_synsets_for(term: str, language: str):
+        call_counter["count"] += 1
+        assert term == synonyms.WARMUP_PROBE_TERM
+        assert language == "spa"
+        return []
+
+    monkeypatch.setattr(synonyms, "_synsets_for", fake_synsets_for)
+
+    first_status, first_detail = synonyms.warmup_synonym_resources()
+    second_status, second_detail = synonyms.warmup_synonym_resources()
+
+    assert first_status == "warmed"
+    assert first_detail is None
+    assert second_status == "already_warmed"
+    assert second_detail is None
+    assert call_counter["count"] == 1
+
+
+@pytest.mark.unit
+def test_warmup_failure_is_idempotent(monkeypatch):
+    call_counter = {"count": 0}
+    synonyms._reset_warmup_state_for_tests()
+
+    def fake_synsets_for(term: str, language: str):
+        call_counter["count"] += 1
+        raise synonyms.SynonymDataNotAvailableError("missing resources")
+
+    monkeypatch.setattr(synonyms, "_synsets_for", fake_synsets_for)
+
+    first_status, first_detail = synonyms.warmup_synonym_resources()
+    second_status, second_detail = synonyms.warmup_synonym_resources()
+
+    assert first_status == "failed"
+    assert first_detail == "missing resources"
+    assert second_status == "failed"
+    assert second_detail == "missing resources"
+    assert call_counter["count"] == 1
+
+
+@pytest.mark.unit
+def test_generate_synonyms_works_after_warmup(monkeypatch):
+    synonyms._reset_warmup_state_for_tests()
+    mapping = {
+        synonyms.WARMUP_PROBE_TERM: [FakeSynset([])],
+        "coche": [FakeSynset(["auto", "vehiculo"])],
+    }
+
+    def fake_synsets_for(term: str, language: str):
+        assert language == "spa"
+        return mapping.get(term, [])
+
+    monkeypatch.setattr(synonyms, "_synsets_for", fake_synsets_for)
+
+    status, detail = synonyms.warmup_synonym_resources()
+    result = synonyms.generate_synonyms("coche", limit=10)
+
+    assert status == "warmed"
+    assert detail is None
+    assert result == ["auto", "vehiculo"]

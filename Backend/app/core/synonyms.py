@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import threading
 import unicodedata
 
 from nltk.corpus import wordnet
@@ -15,10 +16,58 @@ FALLBACK_SYNONYMS: dict[str, list[str]] = {
     "ia": ["inteligencia artificial", "aprendizaje automático", "ai"],
     "inteligencia artificial": ["ia", "aprendizaje automático", "ai"],
 }
+WARMUP_PROBE_TERM = "casa"
+WARMUP_STATUS_COLD = "cold"
+WARMUP_STATUS_WARMING = "warming"
+WARMUP_STATUS_WARMED = "warmed"
+WARMUP_STATUS_FAILED = "failed"
+
+_warmup_lock = threading.Lock()
+_warmup_status = WARMUP_STATUS_COLD
+_warmup_error: str | None = None
 
 
 class SynonymDataNotAvailableError(RuntimeError):
     """Indica que los corpus locales de NLTK no están instalados."""
+
+
+def warmup_synonym_resources(language: str = DEFAULT_LANGUAGE) -> tuple[str, str | None]:
+    """Precarga recursos de sinónimos para evitar latencia en la primera consulta."""
+    global _warmup_error
+    global _warmup_status
+
+    with _warmup_lock:
+        if _warmup_status == WARMUP_STATUS_WARMED:
+            return "already_warmed", None
+        if _warmup_status == WARMUP_STATUS_FAILED:
+            return "failed", _warmup_error
+        if _warmup_status == WARMUP_STATUS_WARMING:
+            return "warming", None
+        _warmup_status = WARMUP_STATUS_WARMING
+
+    try:
+        _synsets_for(WARMUP_PROBE_TERM, language)
+    except SynonymDataNotAvailableError as exc:
+        with _warmup_lock:
+            _warmup_status = WARMUP_STATUS_FAILED
+            _warmup_error = str(exc)
+        print(f"[SYNONYMS] Warmup fallido: {exc}")
+        return "failed", _warmup_error
+
+    with _warmup_lock:
+        _warmup_status = WARMUP_STATUS_WARMED
+        _warmup_error = None
+
+    return "warmed", None
+
+
+def _reset_warmup_state_for_tests() -> None:
+    """Reinicia el estado de warmup para pruebas unitarias."""
+    global _warmup_error
+    global _warmup_status
+    with _warmup_lock:
+        _warmup_status = WARMUP_STATUS_COLD
+        _warmup_error = None
 
 
 def normalize_text(value: str) -> str:

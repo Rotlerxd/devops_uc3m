@@ -49,3 +49,15 @@ export const generateSynonyms = async (token, term, limit = 10) => {
   }
   return response.json();
 };
+
+export const warmupSynonyms = async (token) => {
+  const response = await fetch(`${API_URL}/alerts/synonyms/warmup`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.detail || 'Error al precalentar sinónimos');
+  }
+  return response.json();
+};
