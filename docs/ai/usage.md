@@ -54,6 +54,8 @@ This document records the use of AI-assisted tools in the development of NEWSRAD
 | Frontend alert descriptor synonym selection UX | Codex (gpt-5) | `docs/ai/prompts/alert-synonym-generation-wordnet.md` |
 | Backend and frontend automated tests for synonym generation | Codex (gpt-5) | `docs/ai/prompts/alert-synonym-generation-wordnet.md` |
 | ADR 0016 synonym-generation documentation update | Codex (gpt-5) | `docs/ai/prompts/alert-synonym-generation-wordnet.md` |
+| Experimental fastText fallback for related descriptor suggestions | Codex (gpt-5.5) | `docs/ai/prompts/alert-synonym-generation-fasttext.md` |
+| fastText local model setup script and development launcher flags | Codex (gpt-5.5) | `docs/ai/prompts/alert-synonym-generation-fasttext.md` |
 
 ---
 
