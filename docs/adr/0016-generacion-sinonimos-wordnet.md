@@ -68,6 +68,12 @@ mediante `NEWSRADAR_FASTTEXT_MODEL_PATH`. Si la variable no está definida, el
 fichero no existe o el paquete no está disponible, el backend deshabilita esa
 capa y conserva el comportamiento WordNet/OMW.
 
+La capa fastText queda marcada como experimental. No se recomienda activarla en
+producción por defecto porque entrega términos relacionados, no sinónimos
+estrictos, y porque su calidad y consumo de memoria dependen del modelo local
+elegido. Se mantiene como opción explícita para entornos que quieran evaluar
+mayor cobertura de vocabulario.
+
 ## Justificación
 
 - **Simplicidad operativa:** NLTK se ejecuta dentro del proceso del backend y no
@@ -190,7 +196,9 @@ CI instala los mismos corpus antes de ejecutar las pruebas que los necesitan.
 El paquete Python compatible con fastText se instala con las dependencias del
 backend, pero el fichero de vectores es opcional y externo. En producción puede
 apuntarse `NEWSRADAR_FASTTEXT_MODEL_PATH` a un modelo español preentrenado de
-fastText. Si falta, se registra un aviso y se continúa con WordNet/OMW.
+fastText, aunque esta ruta se considera experimental y no forma parte del
+comportamiento productivo normal. Si falta, se registra un aviso y se continúa
+con WordNet/OMW.
 
 Si los corpus no están disponibles en runtime, el backend devuelve `503` para el
 endpoint de sinónimos en lugar de fallar con un error interno.

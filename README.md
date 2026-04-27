@@ -36,8 +36,14 @@ Backend: http://localhost:8000 | Frontend: http://localhost:5173 | API Docs: htt
 ### Local fastText Synonym Fallback
 
 The Spanish synonym feature can optionally use local fastText vectors for
-related-term suggestions when WordNet has low coverage. Use the binary model
-(`.bin`), not the text vectors file (`.vec`).
+related-term suggestions when WordNet has low coverage. This path is
+**experimental**: fastText returns semantically related terms, not guaranteed
+strict synonyms, and it should not be enabled for normal production deployments
+unless the team has validated the model quality and memory footprint for that
+environment. It is available for local evaluation or deployments that explicitly
+want to try broader vocabulary coverage.
+
+Use the binary model (`.bin`), not the text vectors file (`.vec`).
 
 ```bash
 # Download Spanish fastText vectors to .models/fasttext/cc.es.300.bin

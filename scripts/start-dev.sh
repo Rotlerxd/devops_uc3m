@@ -49,9 +49,9 @@ OPTIONS:
     --frontend        Start only the frontend in foreground
     --both            Start both services in background
     --both-parallel   Start both services in foreground with interleaved output
-    --fasttext        Enable local fastText suggestions using .models/fasttext/cc.es.300.bin
+    --fasttext        Enable experimental local fastText suggestions using .models/fasttext/cc.es.300.bin
     --fasttext-model PATH
-                      Enable local fastText suggestions using a custom .bin model path
+                      Enable experimental local fastText suggestions using a custom .bin model path
     -h, --help        Show this help message
 
 EXAMPLES:
