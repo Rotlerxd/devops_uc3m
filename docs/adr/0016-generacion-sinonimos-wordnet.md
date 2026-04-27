@@ -18,6 +18,12 @@ normal de alta de alertas.
 Además, se observó latencia perceptible en la primera petición de sinónimos
 porque NLTK/OMW inicializa parte de los recursos de forma perezosa en memoria.
 
+Tras la primera implementación, se detectó que WordNet/OMW no cubre bien parte
+del vocabulario típico de RSS, noticias y tecnología. Términos como
+`tecnología`, `ingeniería` o `gpu` pueden devolver pocos resultados o ninguno.
+El producto necesita mantener resultados precisos cuando WordNet existe, pero
+también ofrecer sugerencias relacionadas para vocabulario arbitrario.
+
 La solución debía cumplir varias restricciones:
 
 - No depender de APIs externas, servicios alojados ni costes de uso.
@@ -30,7 +36,8 @@ La solución debía cumplir varias restricciones:
 ## Decisión
 
 Se decide implementar la generación de sinónimos en el backend mediante
-**NLTK WordNet** y el corpus **omw-1.4** de Open Multilingual WordNet.
+**NLTK WordNet** y el corpus **omw-1.4** de Open Multilingual WordNet, con una
+capa opcional de **fastText** como fallback de términos relacionados.
 
 El backend expone un endpoint autenticado para el flujo de alertas:
 
@@ -44,10 +51,22 @@ La lógica queda encapsulada en `app/core/synonyms.py` y aplica:
 - Variantes simples para plurales frecuentes en castellano.
 - Fallback léxico local para alias/acrónimos frecuentes (por ejemplo `ia`).
 - Descomposición de frases en tokens cuando no hay entrada directa útil.
+- Fallback opcional con vectores fastText locales cuando WordNet no alcanza el
+  límite configurado.
 - Warmup idempotente en backend para precargar recursos NLTK/OMW mediante una
-  consulta inocua.
+  consulta inocua y, si está configurado, cargar el modelo fastText.
 - Limpieza, deduplicación y exclusión del término original.
 - Límite configurable dentro del rango soportado de 3 a 10 resultados.
+
+El orden de resultados es determinista: primero WordNet/OMW, después alias
+léxicos locales y finalmente candidatos fastText ordenados por similitud del
+modelo. Los candidatos fastText se tratan explícitamente como términos
+relacionados, no como sinónimos estrictos.
+
+El modelo fastText no se descarga en runtime. La ruta del modelo se configura
+mediante `NEWSRADAR_FASTTEXT_MODEL_PATH`. Si la variable no está definida, el
+fichero no existe o el paquete no está disponible, el backend deshabilita esa
+capa y conserva el comportamiento WordNet/OMW.
 
 ## Justificación
 
@@ -63,6 +82,10 @@ La lógica queda encapsulada en `app/core/synonyms.py` y aplica:
   enriquecer la fuente léxica más adelante sin cambiar el contrato del frontend.
 - **Mejor UX inicial:** El warmup reduce la latencia visible de la primera
   generación de sinónimos sin bloquear el flujo de creación de alertas.
+- **Mayor cobertura:** fastText aporta vecinos semánticos para vocabulario
+  técnico o periodístico que no aparece en WordNet/OMW.
+- **Fallback local:** fastText mantiene el requisito de coste cero y ejecución
+  local, sin introducir un LLM ni un proceso servidor adicional.
 
 ## Alternativas consideradas
 
@@ -84,12 +107,25 @@ Se descartó como solución inicial porque obligaría a mantener datos léxicos
 manualmente. Puede ser una extensión futura si el dominio periodístico necesita
 sinónimos curados.
 
+### ConceptNet
+
+Se descartó como dependencia principal porque introduce una fuente más amplia
+pero menos controlada para este flujo, y su integración local exigiría gestionar
+datos adicionales. Puede reevaluarse si se necesita una base semántica
+explícita, no solo similitud vectorial.
+
 ### Modelo local pequeño (SmolLM2 u otros)
 
 Se mantiene fuera de alcance en esta iteración por coste operativo y huella de
 runtime (modelos, carga en memoria y latencia), además de introducir
 comportamiento menos determinista para un flujo que se beneficia de reglas
 léxicas estables.
+
+### fastText como fuente principal
+
+Se descartó porque sus vecinos vectoriales son términos semánticamente
+relacionados, no necesariamente sinónimos. WordNet/OMW sigue siendo la fuente
+de mayor precisión y fastText solo completa resultados cuando falta cobertura.
 
 ## Consecuencias
 
@@ -107,6 +143,16 @@ léxicas estables.
   `omw-1.4` deben instalarse en CI, en la imagen Docker y en entornos locales.
 - La cobertura léxica de OMW no es equivalente a un tesauro especializado; puede
   haber términos periodísticos, nombres propios o neologismos sin resultados.
+- La cobertura fastText depende de que exista un fichero de vectores local en
+  `NEWSRADAR_FASTTEXT_MODEL_PATH`. La aplicación no lo descarga ni lo versiona
+  en el repositorio.
+- Los modelos fastText preentrenados pueden ocupar cientos de MB o más, por lo
+  que su uso tiene impacto en almacenamiento, memoria y tiempo de carga. Por
+  eso se cargan de forma perezosa y el warmup solo los precarga si están
+  configurados.
+- Los vectores fastText preentrenados requieren citar la referencia oficial
+  indicada por fastText:
+  https://fasttext.cc/docs/en/pretrained-vectors#references
 - La lematización en castellano se mantiene deliberadamente ligera; no se añade
   una dependencia pesada de NLP para este caso de uso.
 - Se añade una llamada de warmup desde frontend al abrir el modal de alertas; es
@@ -123,17 +169,31 @@ Se añaden pruebas unitarias para:
 - Comportamiento sin resultados.
 - Warmup exitoso, idempotencia y manejo de fallo sin repetir inicialización
   costosa.
+- Uso de fastText cuando WordNet devuelve pocos resultados.
+- Funcionamiento sin fastText configurado.
+- Manejo de ruta de modelo inexistente.
+- Orden determinista: WordNet/OMW antes de fastText.
+- Filtrado, deduplicación, exclusión del término original y acrónimos con
+  capitalización variable.
 
 También se añade una prueba funcional del endpoint del backend y una prueba del
 servicio de frontend que consume la API, incluyendo el trigger de warmup.
+
+Las pruebas unitarias de fastText usan dobles de prueba y no descargan ni cargan
+vectores reales en CI.
 
 ## Implicaciones operativas
 
 La imagen Docker descarga `wordnet` y `omw-1.4` durante el build. La pipeline de
 CI instala los mismos corpus antes de ejecutar las pruebas que los necesitan.
 
+El paquete Python compatible con fastText se instala con las dependencias del
+backend, pero el fichero de vectores es opcional y externo. En producción puede
+apuntarse `NEWSRADAR_FASTTEXT_MODEL_PATH` a un modelo español preentrenado de
+fastText. Si falta, se registra un aviso y se continúa con WordNet/OMW.
+
 Si los corpus no están disponibles en runtime, el backend devuelve `503` para el
 endpoint de sinónimos en lugar de fallar con un error interno.
 
 El warmup se ejecuta exclusivamente en backend. El frontend solo dispara el
-endpoint de warmup y nunca carga NLTK localmente.
+endpoint de warmup y nunca carga NLTK ni fastText localmente.

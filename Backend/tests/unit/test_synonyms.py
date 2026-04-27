@@ -5,6 +5,14 @@ import pytest
 from app.core import synonyms
 
 
+@pytest.fixture(autouse=True)
+def reset_synonym_optional_state(monkeypatch):
+    monkeypatch.delenv(synonyms.FASTTEXT_MODEL_PATH_ENV, raising=False)
+    synonyms._reset_warmup_state_for_tests()
+    yield
+    synonyms._reset_warmup_state_for_tests()
+
+
 class FakeSynset:
     def __init__(self, lemmas: list[str]) -> None:
         self.lemmas = lemmas
@@ -31,6 +39,16 @@ class MapWordNet:
     def synsets(self, term: str, lang: str) -> list[FakeSynset]:
         assert lang == "spa"
         return self.mapping.get(term, [])
+
+
+class FakeFastTextModel:
+    def __init__(self, mapping: dict[str, list[tuple[float, str]]]) -> None:
+        self.mapping = mapping
+        self.calls: list[tuple[str, int]] = []
+
+    def get_nearest_neighbors(self, term: str, k: int):
+        self.calls.append((term, k))
+        return self.mapping.get(term, [])[:k]
 
 
 @pytest.mark.unit
@@ -189,3 +207,128 @@ def test_generate_synonyms_works_after_warmup(monkeypatch):
     assert status == "warmed"
     assert detail is None
     assert result == ["auto", "vehiculo"]
+
+
+@pytest.mark.unit
+def test_fasttext_fallback_is_used_when_wordnet_returns_too_few_results(monkeypatch):
+    fake_wordnet = MapWordNet({"tecnologia": [FakeSynset(["técnica"])]})
+    fake_fasttext = FakeFastTextModel(
+        {
+            "tecnologia": [
+                (0.92, "ingenieria"),
+                (0.87, "tecnologia"),
+                (0.84, "http://basura"),
+                (0.81, "innovacion"),
+            ]
+        }
+    )
+    monkeypatch.setattr(synonyms, "wordnet", fake_wordnet)
+    monkeypatch.setattr(synonyms, "_get_fasttext_model", lambda: fake_fasttext)
+
+    result = synonyms.generate_synonyms("tecnologia", limit=4)
+
+    assert result == ["técnica", "ingenieria", "innovacion"]
+
+
+@pytest.mark.unit
+def test_fasttext_is_optional_when_model_is_not_configured(monkeypatch):
+    fake_wordnet = MapWordNet({"casa": [FakeSynset(["hogar"])]})
+    monkeypatch.setattr(synonyms, "wordnet", fake_wordnet)
+
+    result = synonyms.generate_synonyms("casa", limit=10)
+
+    assert result == ["hogar"]
+
+
+@pytest.mark.unit
+def test_missing_fasttext_model_path_is_handled_gracefully(monkeypatch, tmp_path):
+    fake_wordnet = MapWordNet({})
+    monkeypatch.setattr(synonyms, "wordnet", fake_wordnet)
+    monkeypatch.setenv(synonyms.FASTTEXT_MODEL_PATH_ENV, str(tmp_path / "missing.bin"))
+
+    result = synonyms.generate_synonyms("gpu", limit=10)
+
+    assert result == []
+
+
+@pytest.mark.unit
+def test_fasttext_deduplicates_excludes_original_and_filters_junk(monkeypatch):
+    fake_wordnet = MapWordNet({})
+    fake_fasttext = FakeFastTextModel(
+        {
+            "gpu": [
+                (0.95, "GPU"),
+                (0.91, "tarjeta"),
+                (0.88, "tarjeta"),
+                (0.84, "3"),
+                (0.82, "x"),
+                (0.8, "www.ejemplo.com"),
+                (0.78, "procesador"),
+            ]
+        }
+    )
+    monkeypatch.setattr(synonyms, "wordnet", fake_wordnet)
+    monkeypatch.setattr(synonyms, "_get_fasttext_model", lambda: fake_fasttext)
+
+    result = synonyms.generate_synonyms("GPU", limit=10)
+
+    assert result == ["tarjeta", "procesador"]
+
+
+@pytest.mark.unit
+def test_fasttext_limit_and_acronym_lookup_are_case_insensitive(monkeypatch):
+    fake_wordnet = MapWordNet({})
+    fake_fasttext = FakeFastTextModel(
+        {
+            "gpu": [
+                (0.96, "grafica"),
+                (0.94, "nvidia"),
+                (0.92, "hardware"),
+                (0.9, "cuda"),
+            ]
+        }
+    )
+    monkeypatch.setattr(synonyms, "wordnet", fake_wordnet)
+    monkeypatch.setattr(synonyms, "_get_fasttext_model", lambda: fake_fasttext)
+
+    assert synonyms.generate_synonyms("GPU", limit=2) == ["grafica", "nvidia", "hardware"]
+    assert synonyms.generate_synonyms("gpu", limit=2) == ["grafica", "nvidia", "hardware"]
+
+
+@pytest.mark.unit
+def test_wordnet_and_fallback_order_before_fasttext(monkeypatch):
+    fake_wordnet = MapWordNet({"ia": [FakeSynset(["inteligencia"])]})
+    fake_fasttext = FakeFastTextModel({"ia": [(0.99, "aprendizaje"), (0.98, "datos")]})
+    monkeypatch.setattr(synonyms, "wordnet", fake_wordnet)
+    monkeypatch.setattr(synonyms, "FALLBACK_SYNONYMS", {"ia": ["inteligencia artificial"]})
+    monkeypatch.setattr(synonyms, "_get_fasttext_model", lambda: fake_fasttext)
+
+    result = synonyms.generate_synonyms("IA", limit=10)
+
+    assert result == ["inteligencia", "inteligencia artificial", "aprendizaje", "datos"]
+
+
+@pytest.mark.unit
+def test_warmup_preloads_fasttext_when_configured(monkeypatch):
+    call_counter = {"wordnet": 0, "fasttext": 0}
+    fake_fasttext = FakeFastTextModel({synonyms.FASTTEXT_WARMUP_PROBE_TERM: [(0.9, "tecnica")]})
+
+    def fake_synsets_for(term: str, language: str):
+        call_counter["wordnet"] += 1
+        assert term == synonyms.WARMUP_PROBE_TERM
+        assert language == "spa"
+        return []
+
+    def fake_get_fasttext_model():
+        call_counter["fasttext"] += 1
+        return fake_fasttext
+
+    monkeypatch.setattr(synonyms, "_synsets_for", fake_synsets_for)
+    monkeypatch.setattr(synonyms, "_get_fasttext_model", fake_get_fasttext_model)
+
+    first_status, _ = synonyms.warmup_synonym_resources()
+    second_status, _ = synonyms.warmup_synonym_resources()
+
+    assert first_status == "warmed"
+    assert second_status == "already_warmed"
+    assert call_counter == {"wordnet": 1, "fasttext": 1}
