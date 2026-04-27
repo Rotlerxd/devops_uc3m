@@ -21,7 +21,8 @@ contenedores Docker.
 **Decisión clave actual:** las entidades del sistema se almacenan en
 **PostgreSQL 15** mediante **SQLAlchemy 2.0**, con migraciones versionadas por
 **Alembic**. Elasticsearch sigue dedicándose a la indexación y búsqueda de
-noticias RSS. Ver [ADR 0015](adr/0015-postgresql-sqlalchemy-alembic.md).
+noticias RSS. El sistema incluye generación de sinónimos para descriptores de
+alertas mediante NLTK WordNet/OMW (ADR 0016). Ver [ADR 0015](adr/0015-postgresql-sqlalchemy-alembic.md).
 
 ---
 
@@ -138,8 +139,9 @@ Backend API (FastAPI — app/main.py)
 │       └── Cruza con alertas activas → genera Notifications en PostgreSQL
 │
 └── core/
-    └── security.py  ← bcrypt, JWT, create_verification_token,
-                        send_verification_email (smtplib)
+    ├── security.py  ← bcrypt, JWT, create_verification_token,
+    │                  send_verification_email (smtplib)
+    └── synonyms.py  ← Generación de sinónimos (WordNet/OMW + fallback fastText)
 ```
 
 ---
@@ -163,6 +165,7 @@ Backend API (FastAPI — app/main.py)
 | [0013](adr/0013-documentacion-backend-mkdocs-docstrings.md) | Documentación backend: docstrings + MkDocs | Aceptado |
 | [0014](adr/0014-integracion-api-gestion-fuentes-alertas.md) | Integración con API REST para Gestión de Fuentes y Alertas | Aceptado |
 | [0015](adr/0015-postgresql-sqlalchemy-alembic.md) | Persistencia: PostgreSQL + SQLAlchemy + Alembic | Aceptado |
+| [0016](adr/0016-generacion-sinonimos-wordnet.md) | Generación de sinónimos: NLTK WordNet/OMW + fastText fallback | Aceptado |
 
 ---
 
@@ -240,6 +243,8 @@ Para cada canal en rss_channels_store:
     └── es_client.index(index="newsradar_articles", id=entry.link, doc=...)
 
 Para cada alerta en alerts_store:
+    │
+    ├── [OPCIONAL] Expand descriptors con sinónimos vía servicio de sinónimos
     │
     ├── Query Elasticsearch: multi_match sobre title+summary
     │   con filtro published_at >= now-15m

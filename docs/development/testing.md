@@ -28,11 +28,13 @@ Backend/tests/
 ├── unit/
 │   ├── test_security.py     # password hashing, JWT tokens
 │   ├── test_schemas.py      # Pydantic validation
-│   └── test_crud_usuario.py # CRUD with mocked DB
+│   ├── test_crud_usuario.py # CRUD with mocked DB
+│   └── test_synonyms.py     # Synonym generation (WordNet/OMW, fastText fallback)
 └── functional/
     ├── conftest.py           # real PostgreSQL fixtures, test client
     ├── test_auth.py          # /login, /register, /me endpoints
-    └── test_health.py        # /health endpoint
+    ├── test_health.py        # /health endpoint
+    └── test_synonyms_api.py  # Synonym API endpoints
 ```
 
 ### Running
@@ -40,6 +42,9 @@ Backend/tests/
 ```bash
 # Unit tests only (no external services needed)
 cd Backend && pytest tests/unit -m unit
+
+# Synonym generation tests (unit and API)
+cd Backend && pytest tests/unit/test_synonyms.py tests/functional/test_synonyms_api.py
 
 # Integration tests (requires PostgreSQL + Elasticsearch)
 cd Backend && docker compose up -d

@@ -58,6 +58,20 @@ scripts/start-dev.sh --both-parallel --fasttext-model /path/to/cc.es.300.bin
 
 The model file is local-only and is not committed to the repository.
 
+### Synonym Generation for Alerts
+
+When creating or editing alerts, the system can automatically generate synonyms for descriptor terms to improve search coverage. This feature uses NLTK WordNet with the Open Multilingual WordNet (OMW) corpus for Spanish synonym generation, with an optional local fastText fallback for broader vocabulary coverage.
+
+The backend exposes two endpoints:
+- `GET /api/v1/alerts/synonyms?term=<termino>&limit=<3-10>` - generates synonyms for a term
+- `GET /api/v1/alerts/synonyms/warmup` - preloads NLTK resources to reduce first-request latency
+
+In the frontend alert creation modal, synonyms appear as clickable chips below each descriptor field. Users can add suggested synonyms to their alert descriptors (maintaining the 3-10 term limit per alert).
+
+The fastText fallback remains **experimental** and is disabled by default. To enable it locally:
+1. Download Spanish fastText vectors: `scripts/download-fasttext-es.sh`
+2. Start services with: `scripts/start-dev.sh --both-parallel --fasttext`
+
 ### Quality Checks
 
 ```bash
