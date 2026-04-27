@@ -2,7 +2,7 @@
 
 - **Estado:** Aceptado
 - **Fecha:** 2026-04-27
-- **Autores:** Equipo DevOps (Konstantin Rannev, Álvaro Rodriguez) y Backend
+- **Autores:** Equipo DevOps (Konstantin Rannev, Álvaro Rodriguez) y Backend (Alberto Nuñez, Francisco Ruiz)
 - **Reemplaza a:** —
 - **Relacionado con:** [ADR 0001](0001-framework-backend-fastapi.md), [ADR 0009](0009-estrategia-testing-pytest-vitest-playwright.md), [ADR 0014](0014-integracion-api-gestion-fuentes-alertas.md)
 
