@@ -1,11 +1,18 @@
 # ADR 0004: Persistencia de datos en memoria (in-memory stores)
 
-- **Estado:** Aceptado
+- **Estado:** Supersedido por [ADR 0015](0015-postgresql-sqlalchemy-alembic.md)
 - **Fecha:** 2026-04-08
 - **Autores:** Equipo Backend (Alberto Nuñez, Francisco Ruiz)
 - **Reemplaza a:** Propuesta inicial de SQLAlchemy async + PostgreSQL
 - **Reemplazado por:** [ADR 0015](0015-postgresql-sqlalchemy-alembic.md)
 - **Relacionado con:** [ADR 0001](0001-framework-backend-fastapi.md), [ADR 0006](0006-elasticsearch-indexacion-noticias.md)
+
+---
+
+> **Nota:** este ADR documenta una decisión histórica del Sprint 3 que fue
+> revertida en el Sprint 4. La decisión de persistencia vigente está en el
+> [ADR 0015](0015-postgresql-sqlalchemy-alembic.md). El cuerpo de este
+> documento se conserva por trazabilidad.
 
 ---
 
