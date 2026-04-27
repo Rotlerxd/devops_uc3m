@@ -5,40 +5,54 @@
 - **Autores:** Equipo DevOps (Konstantin Rannev, Álvaro Rodriguez)
 - **Reemplaza a:** —
 - **Reemplazado por:** —
-- **Relacionado con:** [ADR 0004](0004-persistencia-en-memoria.md)
+- **Relacionado con:** [ADR 0015](0015-postgresql-sqlalchemy-alembic.md)
 
 ---
 
-## Nota de supersesión
+## Contexto
 
-Este ADR queda **obsoleto** a raíz de la decisión documentada en el ADR 0004
-(revisado el 2026-04-08): el proyecto no utiliza PostgreSQL ni SQLAlchemy
-para la persistencia de entidades, adoptando en su lugar estructuras de datos
-en memoria.
+La creación inicial de tablas en desarrollo se realiza con
+`Base.metadata.create_all()` en el startup de FastAPI, pero en producción es
+necesario versionar la evolución del esquema sin perder los datos existentes
+en cada despliegue.
 
-Al no existir base de datos relacional que gestionar, **Alembic deja de ser
-necesario**. Los ficheros de configuración (`alembic.ini`, `alembic/env.py`,
-`alembic/versions/`) pueden mantenerse en el repositorio como referencia
-histórica o eliminarse en un sprint posterior.
+## Decisión
 
----
+Adoptar **Alembic** como sistema oficial de migraciones de esquema para
+PostgreSQL, integrado con SQLAlchemy y configurado en `Backend/alembic/`.
 
-## Contenido original (archivado)
+El flujo es:
 
-### Contexto (original)
+```bash
+# Generar una nueva migración a partir de los modelos actuales
+cd Backend && alembic revision --autogenerate -m "<descripción>"
 
-En el ADR 0004 original se documentó que la creación inicial de tablas se
-realiza con `Base.metadata.create_all()` en el startup de FastAPI, señalando
-que Alembic sería necesario para gestionar cambios de esquema en producción
-sin pérdida de datos.
+# Aplicar las migraciones pendientes
+cd Backend && alembic upgrade head
+```
 
-### Decisión original
+## Justificación
 
-Configurar Alembic como sistema de migraciones de esquema para PostgreSQL,
-con soporte asíncrono mediante `asyncpg`.
+- **Integración nativa con SQLAlchemy:** reutiliza las definiciones de
+  modelos del backend.
+- **Autogeneración de migraciones:** reduce el error humano al derivar los
+  cambios de esquema directamente del código ORM.
+- **Versionado y reversibilidad:** cada migración queda como un artefacto
+  numerado en `alembic/versions/`, aplicable y revertible.
 
-### Por qué se descartó
+## Consecuencias
 
-La decisión de eliminar PostgreSQL (ADR 0004, 2026-04-08) hace que el problema
-que Alembic resolvía —versionar cambios de esquema en una base de datos
-relacional— deje de existir. No hay esquema que migrar.
+### Positivas
+- Despliegues seguros: el esquema de producción se actualiza sin destruir
+  los datos.
+- Trazabilidad: cada cambio de esquema queda registrado en el repositorio.
+
+### Negativas / riesgos
+- Requiere disciplina del equipo para regenerar la migración cada vez que
+  cambien los modelos.
+
+## Relación con el ADR 0015
+
+El [ADR 0015](0015-postgresql-sqlalchemy-alembic.md) ratifica esta decisión
+como parte de la persistencia vigente del proyecto (PostgreSQL 15 +
+SQLAlchemy 2.0 síncrono + Alembic).
