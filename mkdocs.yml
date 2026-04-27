@@ -38,7 +38,7 @@ nav:
       - 0001 Framework backend FastAPI: adr/0001-framework-backend-fastapi.md
       - 0002 Autenticación JWT: adr/0002-autenticacion-jwt.md
       - 0003 Verificación email con Mailtrap: adr/0003-verificacion-email-smtplib-mailtrap.md
-      - 0004 Persistencia en memoria: adr/0004-persistencia-en-memoria.md
+      - 0004 Persistencia en memoria (histórico): adr/0004-persistencia-en-memoria.md
       - 0005 Frontend React + Vite: adr/0005-frontend-react-vite.md
       - 0006 Elasticsearch indexación noticias: adr/0006-elasticsearch-indexacion-noticias.md
       - 0007 Frontend Bootstrap + React Router: adr/0007-frontend-bootstrap-react-router.md
