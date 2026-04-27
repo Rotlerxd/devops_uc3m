@@ -33,6 +33,31 @@ Backend: http://localhost:8000 | Frontend: http://localhost:5173 | API Docs: htt
 
 ## Development
 
+### Local fastText Synonym Fallback
+
+The Spanish synonym feature can optionally use local fastText vectors for
+related-term suggestions when WordNet has low coverage. This path is
+**experimental**: fastText returns semantically related terms, not guaranteed
+strict synonyms, and it should not be enabled for normal production deployments
+unless the team has validated the model quality and memory footprint for that
+environment. It is available for local evaluation or deployments that explicitly
+want to try broader vocabulary coverage.
+
+Use the binary model (`.bin`), not the text vectors file (`.vec`).
+
+```bash
+# Download Spanish fastText vectors to .models/fasttext/cc.es.300.bin
+scripts/download-fasttext-es.sh
+
+# Start backend + frontend with the optional fastText fallback enabled
+scripts/start-dev.sh --both-parallel --fasttext
+
+# Or use a custom binary model path
+scripts/start-dev.sh --both-parallel --fasttext-model /path/to/cc.es.300.bin
+```
+
+The model file is local-only and is not committed to the repository.
+
 ### Quality Checks
 
 ```bash
@@ -88,6 +113,7 @@ See [docs/deployment/cicd.md](docs/deployment/cicd.md) for full pipeline details
 | `scripts/check.sh` | Quick lint + typecheck + unit tests |
 | `scripts/ci-local.sh` | Full CI pipeline locally |
 | `scripts/gen-docs.sh` | Export OpenAPI documentation |
+| `scripts/download-fasttext-es.sh` | Download optional Spanish fastText vectors |
 
 ## Architecture
 

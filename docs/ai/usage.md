@@ -46,6 +46,15 @@ This document records the use of AI-assisted tools in the development of NEWSRAD
 | Merge conflict resolution in backend and docs | opencode (mimo-v2-pro-free) | `docs/ai/prompts/merge-conflict-resolution.md` |
 | Backend structure reconciliation after merge | opencode (mimo-v2-pro-free) | `docs/ai/prompts/merge-conflict-resolution.md` |
 
+### Alert Synonym Generation (Sprint 4)
+
+| Artifact | AI Tool | Prompt Location |
+|---|---|---|
+| Backend synonym service with WordNet/OMW and lexical fallback | Codex (gpt-5) | `docs/ai/prompts/alert-synonym-generation-wordnet.md` |
+| Frontend alert descriptor synonym selection UX | Codex (gpt-5) | `docs/ai/prompts/alert-synonym-generation-wordnet.md` |
+| Backend and frontend automated tests for synonym generation | Codex (gpt-5) | `docs/ai/prompts/alert-synonym-generation-wordnet.md` |
+| ADR 0016 synonym-generation documentation update | Codex (gpt-5) | `docs/ai/prompts/alert-synonym-generation-wordnet.md` |
+
 ---
 
 ## Policy

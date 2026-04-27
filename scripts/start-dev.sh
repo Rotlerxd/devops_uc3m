@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # scripts/start-dev.sh — Start the development environment
+if [ -z "${BASH_VERSION:-}" ]; then
+    exec bash "$0" "$@"
+fi
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,6 +11,7 @@ BACKEND_DIR="$ROOT_DIR/Backend"
 FRONTEND_DIR="$ROOT_DIR/Frontend"
 VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
 VENV_PIP="$ROOT_DIR/.venv/bin/pip"
+DEFAULT_FASTTEXT_MODEL_PATH="$ROOT_DIR/.models/fasttext/cc.es.300.bin"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -45,6 +49,9 @@ OPTIONS:
     --frontend        Start only the frontend in foreground
     --both            Start both services in background
     --both-parallel   Start both services in foreground with interleaved output
+    --fasttext        Enable experimental local fastText suggestions using .models/fasttext/cc.es.300.bin
+    --fasttext-model PATH
+                      Enable experimental local fastText suggestions using a custom .bin model path
     -h, --help        Show this help message
 
 EXAMPLES:
@@ -52,6 +59,8 @@ EXAMPLES:
     $(basename "$0") --frontend        # Start only frontend
     $(basename "$0") --both            # Start both in background
     $(basename "$0") --both-parallel   # Start both in foreground
+    $(basename "$0") --both-parallel --fasttext
+    $(basename "$0") --backend --fasttext-model /path/to/cc.es.300.bin
 
 EOF
 }
@@ -137,10 +146,28 @@ run_migrations() {
     cd "$ROOT_DIR"
 }
 
+configure_fasttext() {
+    FASTTEXT_ENV_ARGS=()
+
+    if [[ -z "${FASTTEXT_MODEL_PATH:-}" ]]; then
+        return
+    fi
+
+    if [[ ! -f "$FASTTEXT_MODEL_PATH" ]]; then
+        log_warn "fastText model not found at $FASTTEXT_MODEL_PATH"
+        log_warn "Run: scripts/download-fasttext-es.sh"
+        log_warn "Starting backend without fastText fallback."
+        return
+    fi
+
+    FASTTEXT_ENV_ARGS=("NEWSRADAR_FASTTEXT_MODEL_PATH=$FASTTEXT_MODEL_PATH")
+    log_info "Using fastText Spanish model: $FASTTEXT_MODEL_PATH"
+}
+
 start_backend() {
     log_info "Starting backend..."
     cd "$BACKEND_DIR"
-    NEWSRADAR_CONFIGURE_LOCAL_ELASTICSEARCH=true "$VENV_PYTHON" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 &
+    env NEWSRADAR_CONFIGURE_LOCAL_ELASTICSEARCH=true "${FASTTEXT_ENV_ARGS[@]}" "$VENV_PYTHON" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 &
     BACKEND_PID=$!
     cd "$ROOT_DIR"
     log_info "Backend started on http://localhost:8000"
@@ -149,7 +176,7 @@ start_backend() {
 start_backend_blocking() {
     log_info "Starting backend (blocking)..."
     cd "$BACKEND_DIR"
-    exec env NEWSRADAR_CONFIGURE_LOCAL_ELASTICSEARCH=true "$VENV_PYTHON" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+    exec env NEWSRADAR_CONFIGURE_LOCAL_ELASTICSEARCH=true "${FASTTEXT_ENV_ARGS[@]}" "$VENV_PYTHON" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 }
 
 start_frontend() {
@@ -179,6 +206,7 @@ wait_for_services() {
 }
 
 MODE=""
+FASTTEXT_MODEL_PATH="${NEWSRADAR_FASTTEXT_MODEL_PATH:-}"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --backend)
@@ -196,6 +224,19 @@ while [[ $# -gt 0 ]]; do
         --both-parallel)
             MODE="both-parallel"
             shift
+            ;;
+        --fasttext)
+            FASTTEXT_MODEL_PATH="$DEFAULT_FASTTEXT_MODEL_PATH"
+            shift
+            ;;
+        --fasttext-model)
+            if [[ -z "${2:-}" ]]; then
+                log_error "--fasttext-model requires a path"
+                show_help
+                exit 1
+            fi
+            FASTTEXT_MODEL_PATH="$2"
+            shift 2
             ;;
         -h|--help)
             show_help
@@ -220,6 +261,7 @@ case "$MODE" in
         install_backend_deps
         start_databases
         run_migrations
+        configure_fasttext
         start_backend_blocking
         ;;
     frontend)
@@ -232,6 +274,7 @@ case "$MODE" in
         install_frontend_deps
         start_databases
         run_migrations
+        configure_fasttext
         start_backend
         sleep 2
         start_frontend
@@ -244,10 +287,11 @@ case "$MODE" in
         install_frontend_deps
         start_databases
         run_migrations
+        configure_fasttext
         log_info "Starting both services in parallel..."
 
         cd "$BACKEND_DIR"
-        "$VENV_PYTHON" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 &
+        env NEWSRADAR_CONFIGURE_LOCAL_ELASTICSEARCH=true "${FASTTEXT_ENV_ARGS[@]}" "$VENV_PYTHON" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 &
         BACKEND_PID=$!
         cd "$ROOT_DIR"
 
