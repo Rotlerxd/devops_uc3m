@@ -1,9 +1,9 @@
 # Arquitectura del sistema — NEWSRADAR
 
-- **Versión:** 1.1
-- **Fecha:** 2026-04-08
+- **Versión:** 1.2
+- **Fecha:** 2026-04-25
 - **Autores:** Equipo NEWSRADAR (UC3M — Desarrollo y Operación de Sistemas Software)
-- **Estado:** En desarrollo (Sprint 3)
+- **Estado:** En desarrollo (Sprint 4.2 — cierre)
 
 ---
 

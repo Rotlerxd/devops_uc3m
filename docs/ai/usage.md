@@ -1,7 +1,7 @@
 # AI Usage Traceability — NEWSRADAR
 
-- **Versión:** 1.0
-- **Fecha:** 2026-03-25
+- **Versión:** 1.1
+- **Fecha:** 2026-04-25
 
 ---
 
