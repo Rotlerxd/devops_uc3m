@@ -1,0 +1,58 @@
+[
+  {
+    "source_name": "El País",
+    "description": "Periódico generalista español",
+    "channels": [
+      {
+        "name": "Titulares",
+        "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada",
+        "category": "General"
+      },
+      {
+        "name": "Tecnología",
+        "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/tecnologia/portada",
+        "category": "Science and Technology"
+      },
+      {
+        "name": "Gastronomía",
+        "url": "https://feeds.elpais.com/mrss-s/list/ep/site/elpais.com/section/gastronomia",
+        "category": "Health"
+      },
+      {
+        "name": "Deportes",
+        "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/deportes/portada",
+        "category": "Sport"
+      },
+      {
+        "name": "Clima",
+        "url": "https://feeds.elpais.com/mrss-s/list/ep/site/elpais.com/section/clima-y-medio-ambiente",
+        "category": "Weather"
+      },
+      {
+        "name": "Arte y cultura",
+        "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/cultura/portada",
+        "category": "Arts, culture, entertainment and media"
+      },
+      {
+        "name": "Educación",
+        "url": "https://feeds.elpais.com/mrss-s/list/ep/site/elpais.com/section/educacion",
+        "category": "Education"
+      },
+      {
+        "name": "Motor",
+        "url": "http://elpais.com/tag/rss/deportes_motor/a/",
+        "category": "Sport"
+      },
+      {
+        "name": "Sociedad",
+        "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/sociedad/portada",
+        "category": "Society"
+      },
+      {
+        "name": "Ciencia",
+        "url": "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/ciencia/portada",
+        "category": "Science and Technology"
+      }
+    ]
+  }
+]

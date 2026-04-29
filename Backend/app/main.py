@@ -226,6 +226,8 @@ class AlertBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     descriptors: list[str] = Field(default_factory=list)
     categories: list[AlertCategoryItem] = Field(default_factory=list)
+    rss_channels_ids: list[str] = Field(default_factory=list)
+    information_sources_ids: list[str] = Field(default_factory=list)
     cron_expression: str = Field(..., min_length=1, max_length=120)
 
 
@@ -237,6 +239,8 @@ class AlertUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200)
     descriptors: list[str] | None = None
     categories: list[AlertCategoryItem] | None = None
+    rss_channels_ids: list[str] = Field(default_factory=list)
+    information_sources_ids: list[str] = Field(default_factory=list)
     cron_expression: str | None = Field(None, min_length=1, max_length=120)
 
 
@@ -564,26 +568,6 @@ def health() -> dict:
     return {"status": "ok", "timestamp": datetime.now(UTC).isoformat()}
 
 
-@app.get(f"{API_PREFIX}/alerts/synonyms", response_model=SynonymResponse, tags=["alerts"])
-async def get_alert_synonyms(
-    term: str = Query(..., min_length=1, max_length=120),
-    limit: int = Query(DEFAULT_SYNONYM_LIMIT, ge=MIN_SYNONYM_LIMIT, le=MAX_SYNONYM_LIMIT),
-    _: db_models.User = Depends(get_current_user),
-) -> SynonymResponse:
-    """Genera sinónimos locales en español para descriptores de alertas."""
-    try:
-        synonyms = generate_synonyms(term=term, limit=limit, language=DEFAULT_LANGUAGE)
-    except SynonymDataNotAvailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    return SynonymResponse(term=term.strip(), language=DEFAULT_LANGUAGE, limit=limit, synonyms=synonyms)
-
-
-@app.get(f"{API_PREFIX}/alerts/synonyms/warmup", response_model=SynonymWarmupResponse, tags=["alerts"])
-async def warmup_alert_synonyms(_: db_models.User = Depends(get_current_user)) -> SynonymWarmupResponse:
-    """Precarga recursos de sinónimos para evitar latencia en la primera búsqueda."""
-    status, detail = warmup_synonym_resources(language=DEFAULT_LANGUAGE)
-    return SynonymWarmupResponse(status=status, detail=detail)
 
 
 @app.post(f"{API_PREFIX}/auth/login", response_model=TokenResponse, tags=["auth"])
@@ -905,6 +889,17 @@ def create_user_alert(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="La alerta debe tener entre 3 y 10 descriptores (sinónimos).",
         )
+    
+    # Validar que los IDs de canales RSS e información existen en la base de datos antes de crear la alerta
+    if payload.rss_channels_ids:
+        exists_count = db.scalar(select(func.count()).where(db_models.RSSChannel.id.in_(payload.rss_channels_ids)))
+        if exists_count != len(payload.rss_channels_ids):
+             raise HTTPException(status_code=400, detail="Uno o más rss_channels_ids no son válidos.")
+
+    if payload.information_sources_ids:
+        exists_count = db.scalar(select(func.count()).where(db_models.InformationSource.id.in_(payload.information_sources_ids)))
+        if exists_count != len(payload.information_sources_ids):
+             raise HTTPException(status_code=400, detail="Uno o más information_sources_ids no son válidos.")
 
     # Crear la alerta en PostgreSQL
     db_alert = db_models.Alert(user_id=user_id, **payload.model_dump())
@@ -997,6 +992,28 @@ def delete_user_alert(
     # eliminará automáticamente todas las notificaciones asociadas.
     db.delete(db_alert)
     db.commit()
+
+
+@app.get(f"{API_PREFIX}/alerts/synonyms", response_model=SynonymResponse, tags=["alerts"])
+async def get_alert_synonyms(
+    term: str = Query(..., min_length=1, max_length=120),
+    limit: int = Query(DEFAULT_SYNONYM_LIMIT, ge=MIN_SYNONYM_LIMIT, le=MAX_SYNONYM_LIMIT),
+    _: db_models.User = Depends(get_current_user),
+) -> SynonymResponse:
+    """Genera sinónimos locales en español para descriptores de alertas."""
+    try:
+        synonyms = generate_synonyms(term=term, limit=limit, language=DEFAULT_LANGUAGE)
+    except SynonymDataNotAvailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return SynonymResponse(term=term.strip(), language=DEFAULT_LANGUAGE, limit=limit, synonyms=synonyms)
+
+
+@app.get(f"{API_PREFIX}/alerts/synonyms/warmup", response_model=SynonymWarmupResponse, tags=["alerts"])
+async def warmup_alert_synonyms(_: db_models.User = Depends(get_current_user)) -> SynonymWarmupResponse:
+    """Precarga recursos de sinónimos para evitar latencia en la primera búsqueda."""
+    status, detail = warmup_synonym_resources(language=DEFAULT_LANGUAGE)
+    return SynonymWarmupResponse(status=status, detail=detail)
 
 
 # CRUD alert notifications
@@ -1569,7 +1586,27 @@ def rss_fetcher_engine():
                 # Filtros obligatorios base (siempre miramos los últimos 15 min)
                 filtros = [{"range": {"published_at": {"gte": "now-15m"}}}]
                 # Si el usuario especificó categorías, obligamos a Elasticsearch a buscar SOLO en ellas
+                
+                # A. Filtrar por Canales específicos
+                if alert.rss_channels_ids:
+                    # Convertimos a int si tus IDs en la tabla son enteros
+                    ids_int = [int(i) for i in alert.rss_channels_ids]
+                    filtros.append({"terms": {"channel_id": ids_int}})
 
+                # B. Filtrar por Fuentes de Información (InformationSource)
+                if alert.information_sources_ids:
+                    # Buscamos qué canales pertenecen a esas fuentes
+                    ids_fuentes_int = [int(i) for i in alert.information_sources_ids]
+                    canales_de_fuentes = db.scalars(
+                        select(db_models.RSSChannel.id).where(db_models.RSSChannel.information_source_id.in_(ids_fuentes_int))
+                    ).all()
+                    
+                    if canales_de_fuentes:
+                        filtros.append({"terms": {"channel_id": list(canales_de_fuentes)}})
+                    else:
+                        # Si la fuente no tiene canales, bloqueamos para que no devuelva todo
+                        filtros.append({"terms": {"channel_id": [-1]}})
+                        
                 if alert.categories:
                     try:
                         # 1. Extraemos los nombres de las categorías con cuidado

@@ -82,6 +82,8 @@ def upgrade() -> None:
         sa.Column(
             "categories", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'[]'::jsonb")
         ),
+        sa.Column("rss_channels_ids", postgresql.ARRAY(sa.String()), nullable=False, server_default="{}"),
+        sa.Column("information_sources_ids", postgresql.ARRAY(sa.String()), nullable=False, server_default="{}"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
     )
     op.create_index(op.f("ix_alerts_id"), "alerts", ["id"], unique=False)
