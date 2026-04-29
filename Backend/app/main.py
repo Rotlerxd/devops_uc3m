@@ -1589,7 +1589,6 @@ def run_alert_matching():
     with SessionLocal() as db:
         alertas = list(db.scalars(select(db_models.Alert)))
         db_stats = db.scalar(select(db_models.Stats))  # Necesario para actualizar Stats aquí también
-
         for alert in alertas:
             if not alert.descriptors:
                 continue
@@ -1713,7 +1712,8 @@ def run_alert_matching():
                             iptc_category=categoria_clasificada,
                         )
                         db.add(nueva_notificacion)
-                        db_stats.total_notifications += 1
+                        if db_stats is not None:
+                            db_stats.total_notifications += 1
 
                     # --- LLAMADA PARA ENVIAR EL EMAIL ---
                     usuario = db.get(db_models.User, alert.user_id)
