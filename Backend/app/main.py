@@ -14,7 +14,7 @@ import feedparser
 import requests
 from dotenv import load_dotenv
 from elasticsearch import Elasticsearch
-from fastapi import Depends, FastAPI, HTTPException, Query, Response, status, BackgroundTasks
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
@@ -144,24 +144,27 @@ async def lifespan(_: FastAPI):
 
     motor_thread = threading.Thread(target=rss_fetcher_thread, daemon=True)
     motor_thread.start()
-    
+
     alert_thread = threading.Thread(target=alert_checker_thread, daemon=True)
     alert_thread.start()
-    
+
     yield
+
 
 def rss_fetcher_thread():
     time.sleep(5)
     while True:
-        run_rss_extraction()
+        rss_fetcher_engine()
         time.sleep(900)  # 15 minutos
 
+
 def alert_checker_thread():
-    time.sleep(10) # Desfase para asegurar que haya noticias primero
+    time.sleep(10)  # Desfase para asegurar que haya noticias primero
     while True:
         run_alert_matching()
         time.sleep(900)  # 15 minutos
-        
+
+
 app = FastAPI(
     title="NewsRadar API",
     version="1.0.0",
@@ -583,8 +586,6 @@ def health() -> dict:
     return {"status": "ok", "timestamp": datetime.now(UTC).isoformat()}
 
 
-
-
 @app.post(f"{API_PREFIX}/auth/login", response_model=TokenResponse, tags=["auth"])
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
     """Autentica credenciales y emite un JWT de acceso."""
@@ -904,17 +905,19 @@ def create_user_alert(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="La alerta debe tener entre 3 y 10 descriptores (sinónimos).",
         )
-    
+
     # Validar que los IDs de canales RSS e información existen en la base de datos antes de crear la alerta
     if payload.rss_channels_ids:
         exists_count = db.scalar(select(func.count()).where(db_models.RSSChannel.id.in_(payload.rss_channels_ids)))
         if exists_count != len(payload.rss_channels_ids):
-             raise HTTPException(status_code=400, detail="Uno o más rss_channels_ids no son válidos.")
+            raise HTTPException(status_code=400, detail="Uno o más rss_channels_ids no son válidos.")
 
     if payload.information_sources_ids:
-        exists_count = db.scalar(select(func.count()).where(db_models.InformationSource.id.in_(payload.information_sources_ids)))
+        exists_count = db.scalar(
+            select(func.count()).where(db_models.InformationSource.id.in_(payload.information_sources_ids))
+        )
         if exists_count != len(payload.information_sources_ids):
-             raise HTTPException(status_code=400, detail="Uno o más information_sources_ids no son válidos.")
+            raise HTTPException(status_code=400, detail="Uno o más information_sources_ids no son válidos.")
 
     # Crear la alerta en PostgreSQL
     db_alert = db_models.Alert(user_id=user_id, **payload.model_dump())
@@ -1146,21 +1149,13 @@ def delete_alert_notification(
     db.delete(db_notification)
     db.commit()
 
-@app.post(
-    f"{API_PREFIX}/alerts/trigger",
-    tags=["alerts"]
-)
-def force_alert_matching(
-    background_tasks: BackgroundTasks,
-    current_user: db_models.User = Depends(get_current_user)
-):
+
+@app.post(f"{API_PREFIX}/alerts/trigger", tags=["alerts"])
+def force_alert_matching(background_tasks: BackgroundTasks, current_user: db_models.User = Depends(get_current_user)):
     """Fuerza una batida de comprobación de alertas bajo demanda."""
     background_tasks.add_task(run_alert_matching)
-    
-    return {
-        "status": "Procesando", 
-        "message": f"Batida de alertas iniciada por {current_user.email}."
-    }
+
+    return {"status": "Procesando", "message": f"Batida de alertas iniciada por {current_user.email}."}
 
 
 # CRUD categorias
@@ -1541,8 +1536,9 @@ def update_global_stats(db: Session) -> db_models.Stats:
     db.refresh(db_stats)
 
     return db_stats
-  
-def run_rss_extraction():
+
+
+def rss_fetcher_engine():
     """Lógica exclusiva de extracción e indexación (Productor)."""
     print("[MOTOR RSS] Iniciando ciclo de extracción...")
     with SessionLocal() as db:
@@ -1565,7 +1561,7 @@ def run_rss_extraction():
                         "title": entry.get("title", ""),
                         "link": entry.get("link", ""),
                         "summary": entry.get("summary", ""),
-                        "published_at": normalize_published_at(entry), # Asumo que tienes esta función
+                        "published_at": normalize_published_at(entry),  # Asumo que tienes esta función
                         "channel_id": channel.id,
                         "category_id": channel.category_id,
                     }
@@ -1581,18 +1577,19 @@ def run_rss_extraction():
 
             except Exception as e:
                 print(f"[MOTOR RSS] Error canal {channel.url}: {e}")
-        
+
         db.commit()
-        update_global_stats(db) # Asumo que tienes esta función
+        update_global_stats(db)  # Asumo que tienes esta función
         print("[MOTOR RSS] Ciclo de extracción finalizado.")
-        
+
+
 def run_alert_matching():
     """Lógica exclusiva de cruce de alertas (Consumidor)."""
     print("[EL RADAR] Cruzando alertas con las noticias...")
     with SessionLocal() as db:
         alertas = list(db.scalars(select(db_models.Alert)))
-        db_stats = db.scalar(select(db_models.Stats)) # Necesario para actualizar Stats aquí también
-        
+        db_stats = db.scalar(select(db_models.Stats))  # Necesario para actualizar Stats aquí también
+
         for alert in alertas:
             if not alert.descriptors:
                 continue
@@ -1605,7 +1602,7 @@ def run_alert_matching():
             # Filtros obligatorios base (siempre miramos los últimos 24 horas)
             filtros = [{"range": {"published_at": {"gte": "now-24h"}}}]
             # Si el usuario especificó categorías, obligamos a Elasticsearch a buscar SOLO en ellas
-            
+
             # A. Filtrar por Canales específicos
             if alert.rss_channels_ids:
                 # Convertimos a int si tus IDs en la tabla son enteros
@@ -1617,15 +1614,17 @@ def run_alert_matching():
                 # Buscamos qué canales pertenecen a esas fuentes
                 ids_fuentes_int = [int(i) for i in alert.information_sources_ids]
                 canales_de_fuentes = db.scalars(
-                    select(db_models.RSSChannel.id).where(db_models.RSSChannel.information_source_id.in_(ids_fuentes_int))
+                    select(db_models.RSSChannel.id).where(
+                        db_models.RSSChannel.information_source_id.in_(ids_fuentes_int)
+                    )
                 ).all()
-                
+
                 if canales_de_fuentes:
                     filtros.append({"terms": {"channel_id": list(canales_de_fuentes)}})
                 else:
                     # Si la fuente no tiene canales, bloqueamos para que no devuelva todo
                     filtros.append({"terms": {"channel_id": [-1]}})
-                    
+
             if alert.categories:
                 try:
                     # 1. Extraemos los nombres de las categorías con cuidado
@@ -1641,9 +1640,7 @@ def run_alert_matching():
 
                     # 2. Buscamos en PostgreSQL qué IDs numéricos corresponden a esos nombres
                     categorias_db = list(
-                        db.scalars(
-                            select(db_models.Category).where(db_models.Category.name.in_(nombres_categorias))
-                        )
+                        db.scalars(select(db_models.Category).where(db_models.Category.name.in_(nombres_categorias)))
                     )
                     ids_categorias = [c.id for c in categorias_db]
 
