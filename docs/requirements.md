@@ -152,13 +152,13 @@ Estas inspecciones se verifican el día del examen. El sistema debe superarlas t
 
 | Requisito | Componente backend | Componente frontend |
 |---|---|---|
-| RF-01 Alertas | `api/v1/alerts.py`, `models/alerta.py` | Pantalla gestión de alertas |
-| RF-02 Clasificación | `scheduler/classifier.py` | — |
-| RF-03 Notificaciones | `api/v1/notifications.py`, `core/email.py` | Pantalla buzón |
-| RF-04 Fuentes RSS | `api/v1/sources.py`, `models/fuente.py` | Pantalla fuentes y RSS |
-| RF-05 Usuarios | `api/v1/auth.py`, `api/v1/users.py` | Pantallas login/registro/perfil |
-| RF-06 Panel de mando | `api/v1/stats.py` (Sprint 4) | Dashboard, resumen, nubes |
-| RF-07 API REST | `main.py` + todos los routers | — |
+| RF-01 Alertas | `app/main.py` (endpoints `/users/{id}/alerts/...`) | `pages/AlertsPage.jsx`, `services/alertsService.js` |
+| RF-02 Clasificación | `app/main.py` (motor RSS + clasificación IPTC) | — |
+| RF-03 Notificaciones | `app/main.py` (endpoints de notificaciones) + `core/security.py` (envío de email) | `pages/NotificationsPage.jsx`, `services/notificationsService.js` |
+| RF-04 Fuentes RSS | `app/main.py` (endpoints `/information-sources/...`) + `app/data/rss_seed.json` | `pages/SourcesPage.jsx`, `services/sourcesService.js`, `services/rssService.js` |
+| RF-05 Usuarios | `app/main.py` (endpoints `/auth/...`, `/users/...`) + `core/security.py` (JWT, bcrypt, verificación email) | `pages/Login.jsx`, `pages/Register.jsx` |
+| RF-06 Panel de mando | `app/main.py` (endpoint `/stats`) | Pendiente Sprint 4.2 (IM-05 word clouds, IM-06 stats) |
+| RF-07 API REST | `app/main.py` (~1611 líneas; toda la API consolidada) | — |
 
 ---
 
