@@ -234,22 +234,22 @@ stats
 ### 5.1 Captura y notificación (motor RSS)
 
 ```
-asyncio background task (cada 30s en desarrollo)
+RSS fetcher thread (cada 30s en desarrollo)
     │
     ▼
-Para cada canal en rss_channels_store:
+Para cada RSSChannel en la base de datos:
     │
     ├── feedparser.parse(channel.url)
     └── es_client.index(index="newsradar_articles", id=entry.link, doc=...)
 
-Para cada alerta en alerts_store:
+Para cada Alert activa:
     │
     ├── [OPCIONAL] Expand descriptors con sinónimos vía servicio de sinónimos
     │
     ├── Query Elasticsearch: multi_match sobre title+summary
     │   con filtro published_at >= now-15m
     │
-    └── Si hay hits → Notification en notifications_store
+    └── Si hay hits → INSERT en tabla notifications (PostgreSQL)
 ```
 
 ### 5.2 Registro de usuario
@@ -262,7 +262,7 @@ Validar (Pydantic) ──► ¿Email ya existe? ──► 409 Conflict
     │
    NO
     ▼
-Crear UserInDB en users_store (is_verified=False)
+INSERT en tabla users (PostgreSQL) con is_verified=False
     │
     ▼
 create_verification_token(email)  →  JWT (exp=24h)
@@ -280,13 +280,13 @@ send_verification_email()  →  smtplib → Mailtrap
 POST /api/v1/auth/login
     │
     ▼
-Buscar usuario en users_store por email
+SELECT en tabla users (PostgreSQL) por email
     │
     ▼
 verify_password(payload.password, user.password)  ← bcrypt
     │
     ▼
-Generar UUID token → active_tokens[token] = user.id
+create_access_token(user.id)  →  JWT (exp=ACCESS_TOKEN_EXPIRE_MINUTES)
     │
     ▼
 200 OK  { access_token, token_type: "bearer" }
@@ -299,11 +299,13 @@ Generar UUID token → active_tokens[token] = user.id
 ### 6.1 Levantar el entorno de desarrollo
 
 ```bash
-# Solo Elasticsearch (PostgreSQL no requerido)
+# Levantar PostgreSQL y Elasticsearch
 cd Backend && docker compose up -d
 
 # Backend API
 cd Backend && pip install -r requirements.txt
+cd Backend && pip install -r requirements-dev.txt
+cd Backend && alembic upgrade head
 python -m uvicorn app.main:app --reload
 
 # Frontend
@@ -313,13 +315,14 @@ cd Frontend && npm install && npm run dev
 O con el Makefile desde la raíz del repositorio:
 
 ```bash
-make up   # Levanta Elasticsearch
+make up   # Levanta PostgreSQL + Elasticsearch
 make ci   # Pipeline CI completo en local
 ```
 
 ### 6.2 Variables de entorno requeridas (`Backend/.env`)
 
 ```
+DATABASE_URL=postgresql://newsradar_user:newsradar_password@localhost:5432/newsradar_db
 ELASTICSEARCH_URL=http://localhost:9200
 SECRET_KEY=<clave_aleatoria_segura>
 ACCESS_TOKEN_EXPIRE_MINUTES=30
@@ -330,8 +333,7 @@ MAIL_PASSWORD=<contraseña_mailtrap>
 MAIL_FROM=noreply@newsradar.local
 ```
 
-> `DATABASE_URL` ya no es necesaria. El fichero `.env` está en `.gitignore`
-> y nunca se sube al repositorio.
+> El fichero `.env` está en `.gitignore` y nunca se sube al repositorio.
 
 ---
 
@@ -339,12 +341,12 @@ MAIL_FROM=noreply@newsradar.local
 
 | Atributo | Mecanismo |
 |---|---|
-| Mantenibilidad | Modelos Pydantic como única fuente de verdad para entidades |
-| Testabilidad | In-memory stores permiten tests sin servicios externos; mocks con pytest |
+| Mantenibilidad | Modelos SQLAlchemy 2.0 tipados + esquemas Pydantic V2 separados para la API |
+| Testabilidad | Pytest con fixtures de PostgreSQL real (Docker Compose); Vitest + Playwright en frontend/E2E |
 | Seguridad | JWT, bcrypt, verificación de email, roles GESTOR/LECTOR |
-| Simplicidad operativa | Sin ORM ni migraciones; arranque con un único proceso uvicorn |
+| Simplicidad operativa | Docker Compose levanta toda la stack con `docker compose up -d` |
 | Observabilidad | SonarQube (Sprint 5); health check en `/api/v1/health` |
-| Desplegabilidad | Docker Compose (solo Elasticsearch); pipeline CI/CD GitHub Actions |
+| Desplegabilidad | Docker Compose (PostgreSQL + Elasticsearch); pipeline CI/CD GitHub Actions con `uv` |
 
 ---
 
@@ -354,3 +356,4 @@ MAIL_FROM=noreply@newsradar.local
 |---|---|---|
 | 1.0 | 2026-03-24 | Versión inicial tras Sprints 0 y 1 |
 | 1.1 | 2026-04-08 | Eliminación de PostgreSQL/SQLAlchemy. Persistencia in-memory (ADR 0004). ADR 0010 marcado como supersedido. Diagramas, modelo de datos y variables de entorno sincronizados con el código real. |
+| 1.2 | 2026-04-25 | Vuelta a PostgreSQL 15 + SQLAlchemy 2.0 síncrono + Alembic (ADR 0015). Generación de sinónimos para descriptores de alerta (ADR 0016). Sincronización de flujos, atributos de calidad y variables de entorno con la implementación actual. |
