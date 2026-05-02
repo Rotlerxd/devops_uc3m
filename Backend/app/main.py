@@ -211,7 +211,6 @@ class UserBase(BaseModel):
     last_name: str = Field(..., min_length=1, max_length=120)
     organization: str = Field(..., min_length=1, max_length=180)
     role_ids: list[int] = Field(default_factory=list)
-    is_verified: bool = Field(default=False)
 
 
 class UserCreate(UserBase):
@@ -288,7 +287,6 @@ class Category(CategoryBase):
 class NotificationBase(BaseModel):
     timestamp: datetime
     metrics: list[Metric] = Field(default_factory=list)
-    iptc_category: str  # Agregamos el campo de categoría IPTC para poder mostrarlo en las notificaciones sin necesidad de hacer join con la categoría original. Se llenará al crear la notificación a partir de la alerta y su categoría asociada.
 
 
 class NotificationCreate(NotificationBase):
@@ -344,7 +342,6 @@ class RSSChannel(RSSChannelBase):
 
 class StatsBase(BaseModel):
     metrics: list[Metric] = Field(default_factory=list)
-    total_news: int
 
 
 class StatsCreate(StatsBase):
@@ -357,8 +354,6 @@ class StatsUpdate(BaseModel):
 
 class Stats(StatsBase):
     id: int
-    total_news: int = 0
-    total_notifications: int = 0
 
 
 class LoginRequest(BaseModel):
@@ -467,7 +462,6 @@ def sanitize_user(user_db: db_models.User) -> User:
         last_name=user_db.last_name,
         organization=user_db.organization,
         role_ids=role_ids,
-        is_verified=user_db.is_verified,
     )
 
 
@@ -516,7 +510,7 @@ def create_seed_data() -> None:
                     last_name="NewsRadar",
                     organization="UC3M",
                     password=get_password_hash("admin123"),
-                    is_verified=True,
+                    is_verified=True,  # No esta accesible para la API pero si en la DB
                     roles=[gestor_role] if gestor_role else [],
                 )
                 db.add(admin_user)
@@ -1510,15 +1504,7 @@ def update_global_stats(db: Session) -> db_models.Stats:
     t_sources = db.scalar(select(func.count(db_models.InformationSource.id))) or 0
     t_channels = db.scalar(select(func.count(db_models.RSSChannel.id))) or 0
 
-    # 2. Estructuramos el JSON de 'metrics' como una lista de diccionarios
-    # para respetar tu modelo (default=list)
-    current_metrics = [
-        {"name": "total_users", "value": float(t_users)},
-        {"name": "total_alerts", "value": float(t_alerts)},
-        {"name": "total_information_sources", "value": float(t_sources)},
-        {"name": "total_rss_channels", "value": float(t_channels)},
-    ]
-
+    # 2. Obtenemos o creamos el registro de Stats PRIMERO
     db_stats = db.get(db_models.Stats, 1)
 
     if not db_stats:
@@ -1526,12 +1512,24 @@ def update_global_stats(db: Session) -> db_models.Stats:
         db_stats = db_models.Stats(id=1, total_news=0)
         db.add(db_stats)
 
-    # 4. Actualizamos los campos
+    # 3. Actualizamos la columna "oculta" de total_notifications
     db_stats.total_notifications = t_notifications
-    db_stats.metrics = current_metrics
-    # Nota: total_news no lo tocamos aquí porque ese dato se traerá de Elasticsearch
+    # Nota: total_news no lo tocamos aquí porque se trae de Elasticsearch en otro lado
 
-    # 5. Guardamos en base de datos
+    # 4. Estructuramos el JSON de 'metrics' INYECTANDO todos los totales
+    # (Usamos db_stats.total_news para sacar el valor que ya exista en la base de datos)
+    current_metrics = [
+        {"name": "total_users", "value": float(t_users)},
+        {"name": "total_alerts", "value": float(t_alerts)},
+        {"name": "total_information_sources", "value": float(t_sources)},
+        {"name": "total_rss_channels", "value": float(t_channels)},
+        {"name": "total_notifications", "value": float(t_notifications)},
+        {"name": "total_news", "value": float(db_stats.total_news)},
+    ]
+
+    # 5. Asignamos la lista al campo JSONB y guardamos
+    db_stats.metrics = current_metrics
+
     db.commit()
     db.refresh(db_stats)
 
