@@ -26,15 +26,16 @@ NEWSRADAR follows a test pyramid approach with three layers:
 Backend/tests/
 ├── conftest.py              # env vars, shared fixtures
 ├── unit/
+│   ├── test_models.py       # SQLAlchemy ORM models
 │   ├── test_security.py     # password hashing, JWT tokens
-│   ├── test_schemas.py      # Pydantic validation
-│   ├── test_crud_usuario.py # CRUD with mocked DB
 │   └── test_synonyms.py     # Synonym generation (WordNet/OMW, fastText fallback)
 └── functional/
-    ├── conftest.py           # real PostgreSQL fixtures, test client
-    ├── test_auth.py          # /login, /register, /me endpoints
-    ├── test_health.py        # /health endpoint
-    └── test_synonyms_api.py  # Synonym API endpoints
+    ├── conftest.py               # real PostgreSQL fixtures, test client
+    ├── test_api_endpoints.py     # generic CRUD endpoints
+    ├── test_auth.py              # /login, /register, /me endpoints
+    ├── test_health.py            # /health endpoint
+    ├── test_store_operations.py  # DB-backed store operations
+    └── test_synonyms.py          # synonym API endpoints (async)
 ```
 
 ### Running
@@ -64,7 +65,7 @@ cd Backend && pytest tests/ --cov=app --cov-report=term-missing
 
 ### Async Testing
 
-All backend tests use `pytest-asyncio` with `asyncio_mode = "auto"` (configured in `pyproject.toml`). Just write `async def test_...` and it works.
+The backend stack is synchronous (SQLAlchemy 2.0 without `async`), so most tests are synchronous too. `pytest-asyncio` is configured with `asyncio_mode = "auto"` in `pyproject.toml` for the few tests that genuinely need async — currently the synonym API tests in `tests/functional/test_synonyms.py`. When a test needs to be async, just write `async def test_...` and it works.
 
 ---
 
