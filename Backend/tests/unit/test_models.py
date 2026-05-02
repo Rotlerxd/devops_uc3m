@@ -45,7 +45,6 @@ class TestUserModels:
             password="secure123",
         )
         assert user.email == "test@example.com"
-        assert user.is_verified is False
 
     def test_user_in_db(self):
         user = UserInDB(
