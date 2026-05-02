@@ -57,8 +57,8 @@ de noticias, gestionado mediante el cliente oficial `elasticsearch-py`.
 - Análisis de texto con soporte de tokenización en español e inglés.
 - Se integra con el `docker-compose.yml` del proyecto en modo `single-node`
   para desarrollo local.
-- Es el único sistema con persistencia real en disco del proyecto: las noticias
-  indexadas sobreviven a reinicios del servidor (ver ADR 0004).
+- Las noticias indexadas se persisten a disco en Elasticsearch y sobreviven a
+  reinicios del servidor.
  
 ### Negativas / riesgos
  
@@ -73,7 +73,7 @@ de noticias, gestionado mediante el cliente oficial `elasticsearch-py`.
  
 | Sistema | Motor | Propósito |
 |---|---|---|
-| Entidades | SQLAlchemy 2.0 async + PostgreSQL 15 (ver ADR 0004) | Usuarios, alertas, fuentes, roles |
+| Entidades | SQLAlchemy 2.0 síncrono + PostgreSQL 15 (ver ADR 0015) | Usuarios, alertas, fuentes, roles |
 | Noticias / búsqueda | Elasticsearch 8.12 (este ADR) | Indexación y búsqueda de texto completo |
  
 ## Índices previstos
