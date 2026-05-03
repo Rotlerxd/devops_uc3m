@@ -4,6 +4,7 @@ import Register from './pages/Register.jsx';
 import AlertsPage from './pages/AlertsPage.jsx';
 import SourcesPage from './pages/SourcesPage.jsx';
 import NotificationsPage from './pages/NotificationsPage.jsx';
+import Dashboard from './pages/Dashboard.jsx';
 
 function App() {
   return (
@@ -15,6 +16,7 @@ function App() {
         <Route path="/alertas" element={<AlertsPage />} />
         <Route path="/fuentes" element={<SourcesPage />} />
         <Route path="/buzon" element={<NotificationsPage />} />
+        <Route path="/dashboard" element={<Dashboard />} />
       </Routes>
     </BrowserRouter>
   );
