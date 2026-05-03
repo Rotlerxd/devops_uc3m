@@ -14,7 +14,7 @@ import feedparser
 import requests
 from dotenv import load_dotenv
 from elasticsearch import Elasticsearch
-from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
@@ -142,9 +142,27 @@ async def lifespan(_: FastAPI):
         configure_local_elasticsearch()
     check_elastic_connection()
 
-    motor_thread = threading.Thread(target=rss_fetcher_engine, daemon=True)
+    motor_thread = threading.Thread(target=rss_fetcher_thread, daemon=True)
     motor_thread.start()
+
+    alert_thread = threading.Thread(target=alert_checker_thread, daemon=True)
+    alert_thread.start()
+
     yield
+
+
+def rss_fetcher_thread():
+    time.sleep(5)
+    while True:
+        rss_fetcher_engine()
+        time.sleep(900)  # 15 minutos
+
+
+def alert_checker_thread():
+    time.sleep(10)  # Desfase para asegurar que haya noticias primero
+    while True:
+        run_alert_matching()
+        time.sleep(900)  # 15 minutos
 
 
 app = FastAPI(
@@ -193,7 +211,6 @@ class UserBase(BaseModel):
     last_name: str = Field(..., min_length=1, max_length=120)
     organization: str = Field(..., min_length=1, max_length=180)
     role_ids: list[int] = Field(default_factory=list)
-    is_verified: bool = Field(default=False)
 
 
 class UserCreate(UserBase):
@@ -226,6 +243,8 @@ class AlertBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     descriptors: list[str] = Field(default_factory=list)
     categories: list[AlertCategoryItem] = Field(default_factory=list)
+    rss_channels_ids: list[str] = Field(default_factory=list)
+    information_sources_ids: list[str] = Field(default_factory=list)
     cron_expression: str = Field(..., min_length=1, max_length=120)
 
 
@@ -237,6 +256,8 @@ class AlertUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200)
     descriptors: list[str] | None = None
     categories: list[AlertCategoryItem] | None = None
+    rss_channels_ids: list[str] = Field(default_factory=list)
+    information_sources_ids: list[str] = Field(default_factory=list)
     cron_expression: str | None = Field(None, min_length=1, max_length=120)
 
 
@@ -266,7 +287,6 @@ class Category(CategoryBase):
 class NotificationBase(BaseModel):
     timestamp: datetime
     metrics: list[Metric] = Field(default_factory=list)
-    iptc_category: str  # Agregamos el campo de categoría IPTC para poder mostrarlo en las notificaciones sin necesidad de hacer join con la categoría original. Se llenará al crear la notificación a partir de la alerta y su categoría asociada.
 
 
 class NotificationCreate(NotificationBase):
@@ -322,7 +342,6 @@ class RSSChannel(RSSChannelBase):
 
 class StatsBase(BaseModel):
     metrics: list[Metric] = Field(default_factory=list)
-    total_news: int
 
 
 class StatsCreate(StatsBase):
@@ -335,8 +354,6 @@ class StatsUpdate(BaseModel):
 
 class Stats(StatsBase):
     id: int
-    total_news: int = 0
-    total_notifications: int = 0
 
 
 class LoginRequest(BaseModel):
@@ -445,7 +462,6 @@ def sanitize_user(user_db: db_models.User) -> User:
         last_name=user_db.last_name,
         organization=user_db.organization,
         role_ids=role_ids,
-        is_verified=user_db.is_verified,
     )
 
 
@@ -494,7 +510,7 @@ def create_seed_data() -> None:
                     last_name="NewsRadar",
                     organization="UC3M",
                     password=get_password_hash("admin123"),
-                    is_verified=True,
+                    is_verified=True,  # No esta accesible para la API pero si en la DB
                     roles=[gestor_role] if gestor_role else [],
                 )
                 db.add(admin_user)
@@ -562,28 +578,6 @@ def create_seed_data() -> None:
 def health() -> dict:
     """Devuelve estado de salud básico del servicio."""
     return {"status": "ok", "timestamp": datetime.now(UTC).isoformat()}
-
-
-@app.get(f"{API_PREFIX}/alerts/synonyms", response_model=SynonymResponse, tags=["alerts"])
-async def get_alert_synonyms(
-    term: str = Query(..., min_length=1, max_length=120),
-    limit: int = Query(DEFAULT_SYNONYM_LIMIT, ge=MIN_SYNONYM_LIMIT, le=MAX_SYNONYM_LIMIT),
-    _: db_models.User = Depends(get_current_user),
-) -> SynonymResponse:
-    """Genera sinónimos locales en español para descriptores de alertas."""
-    try:
-        synonyms = generate_synonyms(term=term, limit=limit, language=DEFAULT_LANGUAGE)
-    except SynonymDataNotAvailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    return SynonymResponse(term=term.strip(), language=DEFAULT_LANGUAGE, limit=limit, synonyms=synonyms)
-
-
-@app.get(f"{API_PREFIX}/alerts/synonyms/warmup", response_model=SynonymWarmupResponse, tags=["alerts"])
-async def warmup_alert_synonyms(_: db_models.User = Depends(get_current_user)) -> SynonymWarmupResponse:
-    """Precarga recursos de sinónimos para evitar latencia en la primera búsqueda."""
-    status, detail = warmup_synonym_resources(language=DEFAULT_LANGUAGE)
-    return SynonymWarmupResponse(status=status, detail=detail)
 
 
 @app.post(f"{API_PREFIX}/auth/login", response_model=TokenResponse, tags=["auth"])
@@ -906,6 +900,19 @@ def create_user_alert(
             detail="La alerta debe tener entre 3 y 10 descriptores (sinónimos).",
         )
 
+    # Validar que los IDs de canales RSS e información existen en la base de datos antes de crear la alerta
+    if payload.rss_channels_ids:
+        exists_count = db.scalar(select(func.count()).where(db_models.RSSChannel.id.in_(payload.rss_channels_ids)))
+        if exists_count != len(payload.rss_channels_ids):
+            raise HTTPException(status_code=400, detail="Uno o más rss_channels_ids no son válidos.")
+
+    if payload.information_sources_ids:
+        exists_count = db.scalar(
+            select(func.count()).where(db_models.InformationSource.id.in_(payload.information_sources_ids))
+        )
+        if exists_count != len(payload.information_sources_ids):
+            raise HTTPException(status_code=400, detail="Uno o más information_sources_ids no son válidos.")
+
     # Crear la alerta en PostgreSQL
     db_alert = db_models.Alert(user_id=user_id, **payload.model_dump())
     db.add(db_alert)
@@ -997,6 +1004,28 @@ def delete_user_alert(
     # eliminará automáticamente todas las notificaciones asociadas.
     db.delete(db_alert)
     db.commit()
+
+
+@app.get(f"{API_PREFIX}/alerts/synonyms", response_model=SynonymResponse, tags=["alerts"])
+async def get_alert_synonyms(
+    term: str = Query(..., min_length=1, max_length=120),
+    limit: int = Query(DEFAULT_SYNONYM_LIMIT, ge=MIN_SYNONYM_LIMIT, le=MAX_SYNONYM_LIMIT),
+    _: db_models.User = Depends(get_current_user),
+) -> SynonymResponse:
+    """Genera sinónimos locales en español para descriptores de alertas."""
+    try:
+        synonyms = generate_synonyms(term=term, limit=limit, language=DEFAULT_LANGUAGE)
+    except SynonymDataNotAvailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return SynonymResponse(term=term.strip(), language=DEFAULT_LANGUAGE, limit=limit, synonyms=synonyms)
+
+
+@app.get(f"{API_PREFIX}/alerts/synonyms/warmup", response_model=SynonymWarmupResponse, tags=["alerts"])
+async def warmup_alert_synonyms(_: db_models.User = Depends(get_current_user)) -> SynonymWarmupResponse:
+    """Precarga recursos de sinónimos para evitar latencia en la primera búsqueda."""
+    status, detail = warmup_synonym_resources(language=DEFAULT_LANGUAGE)
+    return SynonymWarmupResponse(status=status, detail=detail)
 
 
 # CRUD alert notifications
@@ -1113,6 +1142,14 @@ def delete_alert_notification(
 
     db.delete(db_notification)
     db.commit()
+
+
+@app.post(f"{API_PREFIX}/alerts/trigger", tags=["alerts"])
+def force_alert_matching(background_tasks: BackgroundTasks, current_user: db_models.User = Depends(get_current_user)):
+    """Fuerza una batida de comprobación de alertas bajo demanda."""
+    background_tasks.add_task(run_alert_matching)
+
+    return {"status": "Procesando", "message": f"Batida de alertas iniciada por {current_user.email}."}
 
 
 # CRUD categorias
@@ -1467,15 +1504,7 @@ def update_global_stats(db: Session) -> db_models.Stats:
     t_sources = db.scalar(select(func.count(db_models.InformationSource.id))) or 0
     t_channels = db.scalar(select(func.count(db_models.RSSChannel.id))) or 0
 
-    # 2. Estructuramos el JSON de 'metrics' como una lista de diccionarios
-    # para respetar tu modelo (default=list)
-    current_metrics = [
-        {"name": "total_users", "value": float(t_users)},
-        {"name": "total_alerts", "value": float(t_alerts)},
-        {"name": "total_information_sources", "value": float(t_sources)},
-        {"name": "total_rss_channels", "value": float(t_channels)},
-    ]
-
+    # 2. Obtenemos o creamos el registro de Stats PRIMERO
     db_stats = db.get(db_models.Stats, 1)
 
     if not db_stats:
@@ -1483,12 +1512,24 @@ def update_global_stats(db: Session) -> db_models.Stats:
         db_stats = db_models.Stats(id=1, total_news=0)
         db.add(db_stats)
 
-    # 4. Actualizamos los campos
+    # 3. Actualizamos la columna "oculta" de total_notifications
     db_stats.total_notifications = t_notifications
-    db_stats.metrics = current_metrics
-    # Nota: total_news no lo tocamos aquí porque ese dato se traerá de Elasticsearch
+    # Nota: total_news no lo tocamos aquí porque se trae de Elasticsearch en otro lado
 
-    # 5. Guardamos en base de datos
+    # 4. Estructuramos el JSON de 'metrics' INYECTANDO todos los totales
+    # (Usamos db_stats.total_news para sacar el valor que ya exista en la base de datos)
+    current_metrics = [
+        {"name": "total_users", "value": float(t_users)},
+        {"name": "total_alerts", "value": float(t_alerts)},
+        {"name": "total_information_sources", "value": float(t_sources)},
+        {"name": "total_rss_channels", "value": float(t_channels)},
+        {"name": "total_notifications", "value": float(t_notifications)},
+        {"name": "total_news", "value": float(db_stats.total_news)},
+    ]
+
+    # 5. Asignamos la lista al campo JSONB y guardamos
+    db_stats.metrics = current_metrics
+
     db.commit()
     db.refresh(db_stats)
 
@@ -1496,187 +1537,190 @@ def update_global_stats(db: Session) -> db_models.Stats:
 
 
 def rss_fetcher_engine():
-    """Ejecuta en bucle la captura RSS, indexación y generación de notificaciones."""
-    # Esperamos un poco antes de arrancar la primera vez para dar tiempo a que cargue la semilla
-    time.sleep(5)
-
-    while True:
-        print("[MOTOR RSS] Iniciando ciclo de extracción...")
-
-        # ABRIMOS SESIÓN DE BASE DE DATOS PARA ESTE CICLO
-        with SessionLocal() as db:
-            # 1. Recuperamos estadísticas globales (creamos una si no existe)
-            db_stats = db.scalar(select(db_models.Stats))
-            if not db_stats:
-                db_stats = db_models.Stats(total_news=0, total_notifications=0)
-                db.add(db_stats)
-                db.commit()
-
-            # --- PARTE 1: EXTRACCIÓN RSS ---
-            # Iteramos sobre todos los canales guardados en la BD
-            canales = list(db.scalars(select(db_models.RSSChannel)))
-            for channel in canales:
-                try:
-                    response = requests.get(str(channel.url), timeout=15)
-                    response.raise_for_status()
-                    feed = feedparser.parse(response.content)
-
-                    nuevas_noticias = 0
-                    for entry in feed.entries:
-                        # Preparamos el documento
-                        doc = {
-                            "title": entry.get("title", ""),
-                            "link": entry.get("link", ""),
-                            "summary": entry.get("summary", ""),
-                            "published_at": normalize_published_at(entry),
-                            "channel_id": channel.id,
-                            "category_id": channel.category_id,
-                        }
-
-                        # Lo mandamos a Elasticsearch (al índice 'newsradar_articles')
-                        # Usamos el link como ID en Elastic para evitar duplicados si la noticia ya se bajó
-                        try:
-                            es_client.index(index=NEWS_INDEX, id=doc["link"], document=doc)
-                            nuevas_noticias += 1
-                        except Exception as e:
-                            print(
-                                f"[ELASTIC] Error indexando noticia {doc['link']} del canal {channel.url}: "
-                                f"{type(e).__name__}: {e}"
-                            )
-
-                    if nuevas_noticias > 0:
-                        print(f"[MOTOR RSS] {nuevas_noticias} noticias indexadas de: {channel.url}")
-                        db_stats.total_news += nuevas_noticias
-
-                except Exception as e:
-                    print(f"[MOTOR RSS] Error procesando canal {channel.url}: {type(e).__name__}: {e}")
-
-            print("[EL RADAR] Cruzando alertas con las nuevas noticias...")
-
-            # --- PARTE 2: CRUZAR ALERTAS ---
-            # Iteramos sobre todas las alertas que han creado los usuarios
-            alertas = list(db.scalars(select(db_models.Alert)))
-            for alert in alertas:
-                if not alert.descriptors:
-                    continue
-
-                # 1. Construimos la consulta para Elasticsearch
-                # Buscamos en 'title' y 'summary' cualquier coincidencia con los descriptores
-                clausulas_busqueda = [
-                    {"multi_match": {"query": desc, "fields": ["title", "summary"]}} for desc in alert.descriptors
-                ]
-
-                # Filtros obligatorios base (siempre miramos los últimos 15 min)
-                filtros = [{"range": {"published_at": {"gte": "now-15m"}}}]
-                # Si el usuario especificó categorías, obligamos a Elasticsearch a buscar SOLO en ellas
-
-                if alert.categories:
-                    try:
-                        # 1. Extraemos los nombres de las categorías con cuidado
-                        nombres_categorias = []
-                        for cat in alert.categories:
-                            if isinstance(cat, dict):  # Si viene como JSON dict de la BD
-                                nombres_categorias.append(cat.get("label"))
-                            else:  # Si viene como un objeto Pydantic/SQLAlchemy
-                                nombres_categorias.append(getattr(cat, "label", getattr(cat, "name", "")))
-
-                        # Limpiamos posibles nulos o vacíos
-                        nombres_categorias = [n for n in nombres_categorias if n]
-
-                        # 2. Buscamos en PostgreSQL qué IDs numéricos corresponden a esos nombres
-                        categorias_db = list(
-                            db.scalars(
-                                select(db_models.Category).where(db_models.Category.name.in_(nombres_categorias))
-                            )
-                        )
-                        ids_categorias = [c.id for c in categorias_db]
-
-                        # CHIVATO: Te mostrará en la terminal qué está pasando realmente
-                        print(
-                            f"[DEBUG] Alerta '{alert.name}' busca: {nombres_categorias}. IDs encontrados en BD: {ids_categorias}"
-                        )
-
-                        # 3. Aplicamos el filtro estricto
-                        if ids_categorias:
-                            filtros.append({"terms": {"category_id": ids_categorias}})
-                        else:
-                            # FALLO SILENCIOSO EVITADO: Si no encuentra las categorías, le pasamos un ID imposible
-                            # para que no devuelva todas las noticias de la base de datos.
-                            print(
-                                f"[WARNING] Las categorías {nombres_categorias} no coinciden con ninguna de la base de datos."
-                            )
-                            filtros.append({"terms": {"category_id": [-1]}})
-
-                    except Exception as e:
-                        print(f"[RADAR] Error procesando categorías para la alerta '{alert.name}': {e}")
-                        filtros.append({"terms": {"category_id": [-1]}})  # Bloqueo de seguridad en caso de error
-
-                consulta = {
-                    "query": {
-                        "bool": {
-                            "should": clausulas_busqueda,
-                            "minimum_should_match": 1,  # Al menos 1 descriptor debe coincidir
-                            "filter": filtros,  # Aplicamos la lista de filtros obligatorios
-                        }
-                    }
-                }
-
-                try:
-                    # 2. Disparamos la búsqueda en el índice
-                    resultados = es_client.search(index=NEWS_INDEX, body=consulta)
-
-                    # Elasticsearch devuelve el total de coincidencias en esta ruta
-                    total_hits = resultados["hits"]["total"]["value"]
-                    noticias_encontradas = resultados["hits"]["hits"]
-
-                    # 3. Si hay coincidencias, creamos la notificación
-                    if total_hits > 0:
-                        print(f"[ALERTA DISPARADA] '{alert.name}' (User {alert.user_id}): {total_hits} coincidencias.")
-                        lista_noticias = []
-
-                        # Extraer categoría para la notificación
-                        # Dependiendo de cómo guardes categories en SQLAlchemy (JSON o relación), extraemos el label
-                        if alert.categories:
-                            try:
-                                # Si lo tienes como una lista de strings/dicts en un JSON
-                                categoria_clasificada = ", ".join(
-                                    [cat if isinstance(cat, str) else cat.get("label", "") for cat in alert.categories]
-                                )
-                            except Exception:
-                                categoria_clasificada = "General"
-                        else:
-                            categoria_clasificada = "General"
-
-                        for noticia in noticias_encontradas:
-                            datos_rss = noticia["_source"]
-                            lista_noticias.append(datos_rss)
-
-                            # Creamos la notificación en BD
-                            # Nota: Asumo que "metrics" es un JSON o campo similar en BD
-                            nueva_notificacion = db_models.Notification(
-                                alert_id=alert.id,
-                                timestamp=datetime.now(UTC),
-                                metrics=[{"name": "noticias_encontradas", "value": float(total_hits)}],
-                                iptc_category=categoria_clasificada,
-                            )
-                            db.add(nueva_notificacion)
-                            db_stats.total_notifications += 1
-
-                        # --- LLAMADA PARA ENVIAR EL EMAIL ---
-                        usuario = db.get(db_models.User, alert.user_id)
-                        if usuario and usuario.email:
-                            send_alert_email(to_email=usuario.email, alert_name=alert.name, news_data=lista_noticias)
-
-                except Exception as e:
-                    print(f"[RADAR] Error consultando alerta '{alert.name}': {e}")
-
-            # Guardamos todos los cambios en la BD (Notificaciones nuevas y actualización de Stats)
+    """Lógica exclusiva de extracción e indexación (Productor)."""
+    print("[MOTOR RSS] Iniciando ciclo de extracción...")
+    with SessionLocal() as db:
+        db_stats = db.scalar(select(db_models.Stats))
+        if not db_stats:
+            db_stats = db_models.Stats(total_news=0, total_notifications=0)
+            db.add(db_stats)
             db.commit()
 
-            print("[MOTOR RSS] Actualizando estadísticas globales...")
-            update_global_stats(db)
+        canales = list(db.scalars(select(db_models.RSSChannel)))
+        for channel in canales:
+            try:
+                response = requests.get(str(channel.url), timeout=15)
+                response.raise_for_status()
+                feed = feedparser.parse(response.content)
 
-        # Esperamos 15 minutos (900 segundos) hasta la próxima batida
-        print("[MOTOR RSS] Ciclo completado. Durmiendo 15 minutos...")
-        # time.sleep(900)
-        time.sleep(60)  # Para pruebas
+                nuevas_noticias = 0
+                for entry in feed.entries:
+                    doc = {
+                        "title": entry.get("title", ""),
+                        "link": entry.get("link", ""),
+                        "summary": entry.get("summary", ""),
+                        "published_at": normalize_published_at(entry),  # Asumo que tienes esta función
+                        "channel_id": channel.id,
+                        "category_id": channel.category_id,
+                    }
+                    try:
+                        es_client.index(index=NEWS_INDEX, id=doc["link"], document=doc)
+                        nuevas_noticias += 1
+                    except Exception as e:
+                        print(f"[ELASTIC] Error indexando: {e}")
+
+                if nuevas_noticias > 0:
+                    print(f"[MOTOR RSS] {nuevas_noticias} noticias de: {channel.url}")
+                    db_stats.total_news += nuevas_noticias
+
+            except Exception as e:
+                print(f"[MOTOR RSS] Error canal {channel.url}: {e}")
+
+        db.commit()
+        update_global_stats(db)  # Asumo que tienes esta función
+        print("[MOTOR RSS] Ciclo de extracción finalizado.")
+
+
+def run_alert_matching():
+    """Lógica exclusiva de cruce de alertas (Consumidor)."""
+    print("[EL RADAR] Cruzando alertas con las noticias...")
+    with SessionLocal() as db:
+        alertas = list(db.scalars(select(db_models.Alert)))
+        db_stats = db.scalar(select(db_models.Stats))  # Necesario para actualizar Stats aquí también
+        for alert in alertas:
+            if not alert.descriptors:
+                continue
+            # 1. Construimos la consulta para Elasticsearch
+            # Buscamos en 'title' y 'summary' cualquier coincidencia con los descriptores
+            clausulas_busqueda = [
+                {"multi_match": {"query": desc, "fields": ["title", "summary"]}} for desc in alert.descriptors
+            ]
+
+            # Filtros obligatorios base (siempre miramos los últimos 24 horas)
+            filtros = [{"range": {"published_at": {"gte": "now-24h"}}}]
+            # Si el usuario especificó categorías, obligamos a Elasticsearch a buscar SOLO en ellas
+
+            # A. Filtrar por Canales específicos
+            if alert.rss_channels_ids:
+                # Convertimos a int si tus IDs en la tabla son enteros
+                ids_int = [int(i) for i in alert.rss_channels_ids]
+                filtros.append({"terms": {"channel_id": ids_int}})
+
+            # B. Filtrar por Fuentes de Información (InformationSource)
+            if alert.information_sources_ids:
+                # Buscamos qué canales pertenecen a esas fuentes
+                ids_fuentes_int = [int(i) for i in alert.information_sources_ids]
+                canales_de_fuentes = db.scalars(
+                    select(db_models.RSSChannel.id).where(
+                        db_models.RSSChannel.information_source_id.in_(ids_fuentes_int)
+                    )
+                ).all()
+
+                if canales_de_fuentes:
+                    filtros.append({"terms": {"channel_id": list(canales_de_fuentes)}})
+                else:
+                    # Si la fuente no tiene canales, bloqueamos para que no devuelva todo
+                    filtros.append({"terms": {"channel_id": [-1]}})
+
+            if alert.categories:
+                try:
+                    # 1. Extraemos los nombres de las categorías con cuidado
+                    nombres_categorias = []
+                    for cat in alert.categories:
+                        if isinstance(cat, dict):  # Si viene como JSON dict de la BD
+                            nombres_categorias.append(cat.get("label"))
+                        else:  # Si viene como un objeto Pydantic/SQLAlchemy
+                            nombres_categorias.append(getattr(cat, "label", getattr(cat, "name", "")))
+
+                    # Limpiamos posibles nulos o vacíos
+                    nombres_categorias = [n for n in nombres_categorias if n]
+
+                    # 2. Buscamos en PostgreSQL qué IDs numéricos corresponden a esos nombres
+                    categorias_db = list(
+                        db.scalars(select(db_models.Category).where(db_models.Category.name.in_(nombres_categorias)))
+                    )
+                    ids_categorias = [c.id for c in categorias_db]
+
+                    # CHIVATO: Te mostrará en la terminal qué está pasando realmente
+                    print(
+                        f"[DEBUG] Alerta '{alert.name}' busca: {nombres_categorias}. IDs encontrados en BD: {ids_categorias}"
+                    )
+
+                    # 3. Aplicamos el filtro estricto
+                    if ids_categorias:
+                        filtros.append({"terms": {"category_id": ids_categorias}})
+                    else:
+                        # FALLO SILENCIOSO EVITADO: Si no encuentra las categorías, le pasamos un ID imposible
+                        # para que no devuelva todas las noticias de la base de datos.
+                        print(
+                            f"[WARNING] Las categorías {nombres_categorias} no coinciden con ninguna de la base de datos."
+                        )
+                        filtros.append({"terms": {"category_id": [-1]}})
+
+                except Exception as e:
+                    print(f"[RADAR] Error procesando categorías para la alerta '{alert.name}': {e}")
+                    filtros.append({"terms": {"category_id": [-1]}})  # Bloqueo de seguridad en caso de error
+
+            consulta = {
+                "query": {
+                    "bool": {
+                        "should": clausulas_busqueda,
+                        "minimum_should_match": 1,  # Al menos 1 descriptor debe coincidir
+                        "filter": filtros,  # Aplicamos la lista de filtros obligatorios
+                    }
+                }
+            }
+
+            try:
+                # 2. Disparamos la búsqueda en el índice
+                resultados = es_client.search(index=NEWS_INDEX, body=consulta)
+
+                # Elasticsearch devuelve el total de coincidencias en esta ruta
+                total_hits = resultados["hits"]["total"]["value"]
+                noticias_encontradas = resultados["hits"]["hits"]
+
+                # 3. Si hay coincidencias, creamos la notificación
+                if total_hits > 0:
+                    print(f"[ALERTA DISPARADA] '{alert.name}' (User {alert.user_id}): {total_hits} coincidencias.")
+                    lista_noticias = []
+
+                    # Extraer categoría para la notificación
+                    # Dependiendo de cómo guardes categories en SQLAlchemy (JSON o relación), extraemos el label
+                    if alert.categories:
+                        try:
+                            # Si lo tienes como una lista de strings/dicts en un JSON
+                            categoria_clasificada = ", ".join(
+                                [cat if isinstance(cat, str) else cat.get("label", "") for cat in alert.categories]
+                            )
+                        except Exception:
+                            categoria_clasificada = "General"
+                    else:
+                        categoria_clasificada = "General"
+
+                    for noticia in noticias_encontradas:
+                        datos_rss = noticia["_source"]
+                        lista_noticias.append(datos_rss)
+
+                        # Creamos la notificación en BD
+                        # Nota: Asumo que "metrics" es un JSON o campo similar en BD
+                        nueva_notificacion = db_models.Notification(
+                            alert_id=alert.id,
+                            timestamp=datetime.now(UTC),
+                            metrics=[{"name": "noticias_encontradas", "value": float(total_hits)}],
+                            iptc_category=categoria_clasificada,
+                        )
+                        db.add(nueva_notificacion)
+                        if db_stats is not None:
+                            db_stats.total_notifications += 1
+
+                    # --- LLAMADA PARA ENVIAR EL EMAIL ---
+                    usuario = db.get(db_models.User, alert.user_id)
+                    if usuario and usuario.email:
+                        send_alert_email(to_email=usuario.email, alert_name=alert.name, news_data=lista_noticias)
+                else:
+                    print(f"[ALERTA NO DISPARADA] '{alert.name}' (User {alert.user_id}): 0 coincidencias.")
+            except Exception as e:
+                print(f"[RADAR] Error consultando alerta '{alert.name}': {e}")
+
+        db.commit()
+        print("[EL RADAR] Cruce de alertas finalizado.")

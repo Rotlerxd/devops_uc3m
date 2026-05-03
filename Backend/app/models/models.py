@@ -48,11 +48,10 @@ class Alert(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     cron_expression: Mapped[str] = mapped_column(String(120), nullable=False)
-
-    # Arrays y JSON para adaptarnos a los Pydantic actuales sin crear tablas extra innecesarias
     descriptors: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, nullable=False)
     categories: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
-
+    rss_channels_ids: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, nullable=False)
+    information_sources_ids: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, nullable=False)
     user: Mapped[User] = relationship("User", back_populates="alerts")
     notifications: Mapped[list[Notification]] = relationship(
         "Notification", back_populates="alert", cascade="all, delete-orphan"
