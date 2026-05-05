@@ -1,0 +1,111 @@
+name: Release Tag Automation
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  create-release-tag:
+    name: Create Release Tag
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decide release bump from PR labels
+        id: decide
+        run: |
+          LABELS="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH")"
+          echo "PR labels:"
+          echo "${LABELS}"
+
+          BUMP_LABELS="$(echo "${LABELS}" | grep -E '^release:(patch|minor|major)$' || true)"
+          BUMP_COUNT="$(echo "${BUMP_LABELS}" | sed '/^$/d' | wc -l | tr -d ' ')"
+
+          if [[ "${BUMP_COUNT}" -gt 1 ]]; then
+            echo "More than one release label found:"
+            echo "${BUMP_LABELS}"
+            exit 1
+          fi
+
+          if [[ "${BUMP_COUNT}" -eq 0 ]]; then
+            echo "should_tag=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if echo "${LABELS}" | grep -q '^no-release$'; then
+            echo "Label conflict: no-release with release:*."
+            exit 1
+          fi
+
+          BUMP="${BUMP_LABELS#release:}"
+          echo "should_tag=true" >> "$GITHUB_OUTPUT"
+          echo "bump=${BUMP}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute next semantic tag
+        id: next
+        if: steps.decide.outputs.should_tag == 'true'
+        run: |
+          git fetch --tags --force
+          LATEST_TAG="$(git tag -l 'v*.*.*' --sort=-version:refname | head -n 1)"
+
+          if [[ -z "${LATEST_TAG}" ]]; then
+            MAJOR=0
+            MINOR=0
+            PATCH=0
+          elif [[ "${LATEST_TAG}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            MAJOR="${BASH_REMATCH[1]}"
+            MINOR="${BASH_REMATCH[2]}"
+            PATCH="${BASH_REMATCH[3]}"
+          else
+            echo "Latest tag has invalid format: ${LATEST_TAG}"
+            exit 1
+          fi
+
+          BUMP="${{ steps.decide.outputs.bump }}"
+          if [[ "${BUMP}" == "major" ]]; then
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+          elif [[ "${BUMP}" == "minor" ]]; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          elif [[ "${BUMP}" == "patch" ]]; then
+            PATCH=$((PATCH + 1))
+          else
+            echo "Unsupported bump type: ${BUMP}"
+            exit 1
+          fi
+
+          NEXT_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "next_tag=${NEXT_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Next release tag: ${NEXT_TAG}"
+
+      - name: Create and push tag
+        if: steps.decide.outputs.should_tag == 'true'
+        env:
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          NEXT_TAG: ${{ steps.next.outputs.next_tag }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [[ -z "${MERGE_SHA}" ]]; then
+            echo "Missing merge commit SHA from pull_request event."
+            exit 1
+          fi
+
+          if git rev-parse "${NEXT_TAG}" >/dev/null 2>&1; then
+            echo "Tag already exists: ${NEXT_TAG}"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${NEXT_TAG}" "${MERGE_SHA}" -m "Release ${NEXT_TAG} from PR #${PR_NUMBER}"
+          git push origin "${NEXT_TAG}"

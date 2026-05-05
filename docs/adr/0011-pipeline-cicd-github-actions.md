@@ -27,7 +27,9 @@ Se implementa un pipeline de CI/CD con **GitHub Actions** compuesto por:
 
 - **ci.yml:** verificación completa en cada push y pull request.
 - **cd.yml:** construcción y publicación de imágenes Docker en el registro
-  de contenedores de GitHub (GHCR).
+  de contenedores de GitHub (GHCR), activado por tags de versión.
+- **release-tag.yml:** creación automática de tags semánticos al mergear PRs
+  etiquetadas para release (`release:patch|minor|major`).
 
 ## Justificación
 
@@ -56,10 +58,14 @@ Se implementa un pipeline de CI/CD con **GitHub Actions** compuesto por:
 9. **sonarqube** — análisis de calidad SonarQube
 10. **trivy-scan** — escaneo de vulnerabilidades de contenedor
 
-### cd.yml (2 jobs)
+### cd.yml (1 job)
 
 1. **build-and-push** — build y push a GHCR
-2. **deploy** — placeholder para despliegue
+
+### release-tag.yml (1 job)
+
+1. **create-release-tag** — calcula siguiente versión semántica y crea tag
+   al mergear PR con etiqueta de release
 
 ## Consecuencias
 
@@ -67,7 +73,8 @@ Se implementa un pipeline de CI/CD con **GitHub Actions** compuesto por:
 
 - Feedback rápido en PRs: lint, typecheck y tests unitarios en minutos.
 - Validación completa antes de merge: integración, E2E, seguridad.
-- Imágenes Docker publicadas automáticamente en cada push a main.
+- Releases Docker se publican cuando existe decisión explícita de versión
+  (tag manual o etiqueta de release en PR).
 - Service containers eliminan la complejidad de docker-compose en CI.
 - Caché de dependencias reduce tiempos de ejecución.
 
@@ -93,4 +100,5 @@ Se implementa un pipeline de CI/CD con **GitHub Actions** compuesto por:
 ## Configuración aplicada
 
 - `.github/workflows/ci.yml` — pipeline completo de CI
-- `.github/workflows/cd.yml` — pipeline de despliegue (stub)
+- `.github/workflows/cd.yml` — pipeline de release por tags semánticos
+- `.github/workflows/release-tag.yml` — automatización de versionado por etiquetas de PR
