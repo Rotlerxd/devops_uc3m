@@ -21,6 +21,8 @@ from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field, HttpUrl
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 from app.core.security import (
     ALGORITHM,
@@ -52,7 +54,7 @@ load_dotenv(dotenv_path=env_path)
 
 # 2. Instanciar el cliente global
 es_client = Elasticsearch(ELASTICSEARCH_URL, request_timeout=30, retry_on_timeout=True, max_retries=3)
-
+scheduler = BackgroundScheduler()
 
 def check_elastic_connection():
     """Comprueba que Elasticsearch responde durante el arranque."""
@@ -137,6 +139,7 @@ def normalize_published_at(entry) -> str:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Inicializa datos base y arranca servicios auxiliares al levantar la app."""
+    scheduler.start()
     create_seed_data()
     if should_configure_local_elasticsearch():
         configure_local_elasticsearch()
@@ -145,10 +148,11 @@ async def lifespan(_: FastAPI):
     motor_thread = threading.Thread(target=rss_fetcher_thread, daemon=True)
     motor_thread.start()
 
-    alert_thread = threading.Thread(target=alert_checker_thread, daemon=True)
-    alert_thread.start()
-
+    # alert_thread = threading.Thread(target=alert_checker_thread, daemon=True)
+    # alert_thread.start()
+    
     yield
+    scheduler.shutdown()
 
 
 def rss_fetcher_thread():
@@ -915,10 +919,13 @@ def create_user_alert(
 
     # Crear la alerta en PostgreSQL
     db_alert = db_models.Alert(user_id=user_id, **payload.model_dump())
+    
+    
+    
     db.add(db_alert)
     db.commit()
     db.refresh(db_alert)
-
+    programar_alerta(db_alert.id, db_alert.cron_expression)
     return db_alert
 
 
@@ -975,8 +982,11 @@ def update_user_alert(
     for key, value in update_data.items():
         setattr(db_alert, key, value)
 
+    
+    
     db.commit()
     db.refresh(db_alert)
+    programar_alerta(db_alert.id, db_alert.cron_expression)
     return db_alert
 
 
@@ -1003,6 +1013,9 @@ def delete_user_alert(
     # Gracias a SQLAlchemy y el "CASCADE" de la BD, borrar la alerta aquí
     # eliminará automáticamente todas las notificaciones asociadas.
     db.delete(db_alert)
+    
+    desprogramar_alerta(alert_id)
+    
     db.commit()
 
 
@@ -1139,17 +1152,8 @@ def delete_alert_notification(
     """Elimina una notificación de alerta."""
     ensure_alert_for_user(user_id, alert_id, db)
     db_notification = ensure_notification_for_alert(alert_id, notification_id, db)
-
     db.delete(db_notification)
     db.commit()
-
-
-@app.post(f"{API_PREFIX}/alerts/trigger", tags=["alerts"])
-def force_alert_matching(background_tasks: BackgroundTasks, current_user: db_models.User = Depends(get_current_user)):
-    """Fuerza una batida de comprobación de alertas bajo demanda."""
-    background_tasks.add_task(run_alert_matching)
-
-    return {"status": "Procesando", "message": f"Batida de alertas iniciada por {current_user.email}."}
 
 
 # CRUD categorias
@@ -1437,6 +1441,22 @@ def list_stats(_: UserInDB = Depends(get_current_user), db: Session = Depends(ge
     """Lista entradas de estadísticas globales."""
     return list(db.scalars(select(db_models.Stats)))
 
+@app.get(
+    f"{API_PREFIX}/stats/refresh",
+    status_code=200,
+    tags=["stats"],
+)
+def refresh_stats(
+    _: UserInDB = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> dict:
+    """Fuerza una actualización manual de las estadísticas globales."""
+    try:
+        update_global_stats(db)
+        return {"detail": "Estadísticas actualizadas correctamente"}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error interno al actualizar stats: {str(e)}")
 
 @app.post(f"{API_PREFIX}/stats", response_model=Stats, status_code=201, tags=["stats"])
 def create_stats(payload: StatsCreate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Stats:
@@ -1490,6 +1510,8 @@ def delete_stats(stats_id: int, _: UserInDB = Depends(get_current_user), db: Ses
 
     db.delete(db_stats)
     db.commit()
+    
+
 
 
 def update_global_stats(db: Session) -> db_models.Stats:
@@ -1559,7 +1581,7 @@ def rss_fetcher_engine():
                         "title": entry.get("title", ""),
                         "link": entry.get("link", ""),
                         "summary": entry.get("summary", ""),
-                        "published_at": normalize_published_at(entry),  # Asumo que tienes esta función
+                        "pubDate": normalize_published_at(entry),  # Asumo que tienes esta función
                         "channel_id": channel.id,
                         "category_id": channel.category_id,
                     }
@@ -1581,146 +1603,163 @@ def rss_fetcher_engine():
         print("[MOTOR RSS] Ciclo de extracción finalizado.")
 
 
-def run_alert_matching():
-    """Lógica exclusiva de cruce de alertas (Consumidor)."""
-    print("[EL RADAR] Cruzando alertas con las noticias...")
+def run_alert_matching(alerta_id: int): # <-- 1. AÑADIMOS EL PARÁMETRO AQUÍ
+    """Lógica exclusiva de cruce de alertas (Consumidor) para UNA alerta concreta."""
+    print(f"[EL RADAR] Cruzando alerta ID {alerta_id} con las noticias...")
+    
     with SessionLocal() as db:
-        alertas = list(db.scalars(select(db_models.Alert)))
+        # 2. EN VEZ DE SACAR TODAS, SACAMOS SOLO LA QUE TOCA AHORA
+        alert = db.get(db_models.Alert, alerta_id)
+        if not alert:
+            print(f"[RADAR] La alerta {alerta_id} ya no existe en la BD.")
+            return
+
+        # 3. ELIMINAMOS EL BUCLE 'for alert in alertas:'
+        
         db_stats = db.scalar(select(db_models.Stats))  # Necesario para actualizar Stats aquí también
-        for alert in alertas:
-            if not alert.descriptors:
-                continue
-            # 1. Construimos la consulta para Elasticsearch
-            # Buscamos en 'title' y 'summary' cualquier coincidencia con los descriptores
-            clausulas_busqueda = [
-                {"multi_match": {"query": desc, "fields": ["title", "summary"]}} for desc in alert.descriptors
-            ]
+        
+        if not alert.descriptors:
+            print(f"[RADAR] La alerta '{alert.name}' no tiene descriptores. Saltando.")
+            return # Salimos porque no hay nada que buscar
 
-            # Filtros obligatorios base (siempre miramos los últimos 24 horas)
-            filtros = [{"range": {"published_at": {"gte": "now-24h"}}}]
-            # Si el usuario especificó categorías, obligamos a Elasticsearch a buscar SOLO en ellas
+        # 1. Construimos la consulta para Elasticsearch
+        # Buscamos en 'title' y 'summary' cualquier coincidencia con los descriptores
+        clausulas_busqueda = [
+            {"multi_match": {"query": desc, "fields": ["title", "summary"]}} for desc in alert.descriptors
+        ]
 
-            # A. Filtrar por Canales específicos
-            if alert.rss_channels_ids:
-                # Convertimos a int si tus IDs en la tabla son enteros
-                ids_int = [int(i) for i in alert.rss_channels_ids]
-                filtros.append({"terms": {"channel_id": ids_int}})
+        filtros = []
+        
+        # A. Filtrar por Canales específicos
+        if alert.rss_channels_ids:
+            ids_int = [int(i) for i in alert.rss_channels_ids]
+            filtros.append({"terms": {"channel_id": ids_int}})
 
-            # B. Filtrar por Fuentes de Información (InformationSource)
-            if alert.information_sources_ids:
-                # Buscamos qué canales pertenecen a esas fuentes
-                ids_fuentes_int = [int(i) for i in alert.information_sources_ids]
-                canales_de_fuentes = db.scalars(
-                    select(db_models.RSSChannel.id).where(
-                        db_models.RSSChannel.information_source_id.in_(ids_fuentes_int)
-                    )
-                ).all()
+        # B. Filtrar por Fuentes de Información (InformationSource)
+        if alert.information_sources_ids:
+            ids_fuentes_int = [int(i) for i in alert.information_sources_ids]
+            canales_de_fuentes = db.scalars(
+                select(db_models.RSSChannel.id).where(
+                    db_models.RSSChannel.information_source_id.in_(ids_fuentes_int)
+                )
+            ).all()
 
-                if canales_de_fuentes:
-                    filtros.append({"terms": {"channel_id": list(canales_de_fuentes)}})
-                else:
-                    # Si la fuente no tiene canales, bloqueamos para que no devuelva todo
-                    filtros.append({"terms": {"channel_id": [-1]}})
+            if canales_de_fuentes:
+                filtros.append({"terms": {"channel_id": list(canales_de_fuentes)}})
+            else:
+                filtros.append({"terms": {"channel_id": [-1]}})
 
-            if alert.categories:
-                try:
-                    # 1. Extraemos los nombres de las categorías con cuidado
-                    nombres_categorias = []
-                    for cat in alert.categories:
-                        if isinstance(cat, dict):  # Si viene como JSON dict de la BD
-                            nombres_categorias.append(cat.get("label"))
-                        else:  # Si viene como un objeto Pydantic/SQLAlchemy
-                            nombres_categorias.append(getattr(cat, "label", getattr(cat, "name", "")))
-
-                    # Limpiamos posibles nulos o vacíos
-                    nombres_categorias = [n for n in nombres_categorias if n]
-
-                    # 2. Buscamos en PostgreSQL qué IDs numéricos corresponden a esos nombres
-                    categorias_db = list(
-                        db.scalars(select(db_models.Category).where(db_models.Category.name.in_(nombres_categorias)))
-                    )
-                    ids_categorias = [c.id for c in categorias_db]
-
-                    # CHIVATO: Te mostrará en la terminal qué está pasando realmente
-                    print(
-                        f"[DEBUG] Alerta '{alert.name}' busca: {nombres_categorias}. IDs encontrados en BD: {ids_categorias}"
-                    )
-
-                    # 3. Aplicamos el filtro estricto
-                    if ids_categorias:
-                        filtros.append({"terms": {"category_id": ids_categorias}})
+        if alert.categories:
+            try:
+                nombres_categorias = []
+                for cat in alert.categories:
+                    if isinstance(cat, dict):
+                        nombres_categorias.append(cat.get("label"))
                     else:
-                        # FALLO SILENCIOSO EVITADO: Si no encuentra las categorías, le pasamos un ID imposible
-                        # para que no devuelva todas las noticias de la base de datos.
-                        print(
-                            f"[WARNING] Las categorías {nombres_categorias} no coinciden con ninguna de la base de datos."
-                        )
-                        filtros.append({"terms": {"category_id": [-1]}})
+                        nombres_categorias.append(getattr(cat, "label", getattr(cat, "name", "")))
 
-                except Exception as e:
-                    print(f"[RADAR] Error procesando categorías para la alerta '{alert.name}': {e}")
-                    filtros.append({"terms": {"category_id": [-1]}})  # Bloqueo de seguridad en caso de error
+                nombres_categorias = [n for n in nombres_categorias if n]
 
-            consulta = {
-                "query": {
-                    "bool": {
-                        "should": clausulas_busqueda,
-                        "minimum_should_match": 1,  # Al menos 1 descriptor debe coincidir
-                        "filter": filtros,  # Aplicamos la lista de filtros obligatorios
-                    }
+                categorias_db = list(
+                    db.scalars(select(db_models.Category).where(db_models.Category.name.in_(nombres_categorias)))
+                )
+                ids_categorias = [c.id for c in categorias_db]
+
+                print(f"[DEBUG] Alerta '{alert.name}' busca: {nombres_categorias}. IDs encontrados en BD: {ids_categorias}")
+
+                if ids_categorias:
+                    filtros.append({"terms": {"category_id": ids_categorias}})
+                else:
+                    print(f"[WARNING] Las categorías {nombres_categorias} no coinciden con ninguna de la base de datos.")
+                    filtros.append({"terms": {"category_id": [-1]}})
+
+            except Exception as e:
+                print(f"[RADAR] Error procesando categorías para la alerta '{alert.name}': {e}")
+                filtros.append({"terms": {"category_id": [-1]}})
+
+        consulta = {
+            "query": {
+                "bool": {
+                    "should": clausulas_busqueda,
+                    "minimum_should_match": 1,
+                    "filter": filtros,
                 }
             }
+        }
+        
+        
+        try:
+            # 2. Disparamos la búsqueda en el índice
+            resultados = es_client.search(index=NEWS_INDEX, body=consulta)
 
-            try:
-                # 2. Disparamos la búsqueda en el índice
-                resultados = es_client.search(index=NEWS_INDEX, body=consulta)
+            # Elasticsearch devuelve el total de coincidencias en esta ruta
+            total_hits = resultados["hits"]["total"]["value"]
+            noticias_encontradas = resultados["hits"]["hits"]
 
-                # Elasticsearch devuelve el total de coincidencias en esta ruta
-                total_hits = resultados["hits"]["total"]["value"]
-                noticias_encontradas = resultados["hits"]["hits"]
+            # 3. Si hay coincidencias, creamos la notificación
+            if total_hits > 0:
+                print(f"[ALERTA DISPARADA] '{alert.name}' (User {alert.user_id}): {total_hits} coincidencias.")
+                lista_noticias = []
 
-                # 3. Si hay coincidencias, creamos la notificación
-                if total_hits > 0:
-                    print(f"[ALERTA DISPARADA] '{alert.name}' (User {alert.user_id}): {total_hits} coincidencias.")
-                    lista_noticias = []
-
-                    # Extraer categoría para la notificación
-                    # Dependiendo de cómo guardes categories en SQLAlchemy (JSON o relación), extraemos el label
-                    if alert.categories:
-                        try:
-                            # Si lo tienes como una lista de strings/dicts en un JSON
-                            categoria_clasificada = ", ".join(
-                                [cat if isinstance(cat, str) else cat.get("label", "") for cat in alert.categories]
-                            )
-                        except Exception:
-                            categoria_clasificada = "General"
-                    else:
-                        categoria_clasificada = "General"
-
-                    for noticia in noticias_encontradas:
-                        datos_rss = noticia["_source"]
-                        lista_noticias.append(datos_rss)
-
-                        # Creamos la notificación en BD
-                        # Nota: Asumo que "metrics" es un JSON o campo similar en BD
-                        nueva_notificacion = db_models.Notification(
-                            alert_id=alert.id,
-                            timestamp=datetime.now(UTC),
-                            metrics=[{"name": "noticias_encontradas", "value": float(total_hits)}],
-                            iptc_category=categoria_clasificada,
+                # Extraer categoría para la notificación
+                if alert.categories:
+                    try:
+                        categoria_clasificada = ", ".join(
+                            [cat if isinstance(cat, str) else cat.get("label", "") for cat in alert.categories]
                         )
-                        db.add(nueva_notificacion)
-                        if db_stats is not None:
-                            db_stats.total_notifications += 1
-
-                    # --- LLAMADA PARA ENVIAR EL EMAIL ---
-                    usuario = db.get(db_models.User, alert.user_id)
-                    if usuario and usuario.email:
-                        send_alert_email(to_email=usuario.email, alert_name=alert.name, news_data=lista_noticias)
+                    except Exception:
+                        categoria_clasificada = "General"
                 else:
-                    print(f"[ALERTA NO DISPARADA] '{alert.name}' (User {alert.user_id}): 0 coincidencias.")
-            except Exception as e:
-                print(f"[RADAR] Error consultando alerta '{alert.name}': {e}")
+                    categoria_clasificada = "General"
+
+                for noticia in noticias_encontradas:
+                    datos_rss = noticia["_source"]
+                    lista_noticias.append(datos_rss)
+
+                    # Creamos la notificación en BD
+                    nueva_notificacion = db_models.Notification(
+                        alert_id=alert.id,
+                        timestamp=datetime.now(UTC),
+                        metrics=[{"name": "noticias_encontradas", "value": float(total_hits)}],
+                        iptc_category=categoria_clasificada,
+                    )
+                    db.add(nueva_notificacion)
+                    
+                    if db_stats is not None:
+                        db_stats.total_notifications += 1
+
+                # --- LLAMADA PARA ENVIAR EL EMAIL ---
+                usuario = db.get(db_models.User, alert.user_id)
+                if usuario and usuario.email:
+                    send_alert_email(to_email=usuario.email, alert_name=alert.name, news_data=lista_noticias, category=categoria_clasificada)
+            else:
+                print(f"[ALERTA NO DISPARADA] '{alert.name}' (User {alert.user_id}): 0 coincidencias.")
+        
+        except Exception as e:
+            print(f"[RADAR] Error consultando alerta '{alert.name}': {e}")
 
         db.commit()
-        print("[EL RADAR] Cruce de alertas finalizado.")
+        print(f"[EL RADAR] Cruce finalizado para la alerta '{alert.name}'.")
+
+def programar_alerta(alerta_id: int, cron_expr: str):
+    """Añade o actualiza el trabajo de una alerta en el scheduler."""
+    trigger = CronTrigger.from_crontab(cron_expr)
+    
+    # scheduler.add_job permite añadir tareas. 
+    # replace_existing=True hace que si ya existía una tarea con ese ID, la sobrescriba.
+    scheduler.add_job(
+        func=run_alert_matching,     # Función que se ejecutará cuando se dispare el cron
+        trigger=trigger,
+        args=[alerta_id],          # Le pasamos el ID a tu función
+        id=f"alerta_{alerta_id}",  # ID único para poder borrarla luego
+        replace_existing=True
+    )
+    print(f"Alerta {alerta_id} programada con cron: {cron_expr}")
+
+# 3. Función para borrar una alerta si el usuario la elimina
+def desprogramar_alerta(alerta_id: int):
+    """Elimina una alerta del scheduler."""
+    job_id = f"alerta_{alerta_id}"
+    if scheduler.get_job(job_id):
+        scheduler.remove_job(job_id)
+        print(f"Alerta {alerta_id} desprogramada.")

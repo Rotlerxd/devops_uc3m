@@ -121,7 +121,7 @@ def send_verification_email(to_email: str, token: str):
         print(f"Error al enviar el correo: {e}")
 
 
-def send_alert_email(to_email: str, alert_name: str, news_data):
+def send_alert_email(to_email: str, alert_name: str, news_data, category: str):
     """
     Envía el correo de alerta de noticias siguiendo el formato estricto del Sprint 3.2.
     """
@@ -140,13 +140,13 @@ def send_alert_email(to_email: str, alert_name: str, news_data):
         html_items += f"""
         <div style="border-bottom: 1px solid #ddd; padding: 10px 0;">
             <p><strong>{n.get("title", "Sin título")}</strong></p>
-            <p><small>{n.get("published", "N/A")} | <a href="{n.get("link")}">Ver noticia</a></small></p>
+            <p><small>{n.get("pubDate", "N/A")}| Categoría: {category} | <a href="{n.get("link")}">Ver noticia</a></small></p>
         </div>
         """
     html = f"""
     <html>
         <body>
-            <h2>Actualización para tu alerta: {alert_name}</h2>
+            <h2>Actualización de {alert_name} en {now_str}</h2>
             <p>Hemos encontrado {len(news_data)} noticias nuevas:</p>
             {html_items}
         </body>
