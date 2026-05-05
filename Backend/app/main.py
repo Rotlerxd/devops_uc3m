@@ -149,9 +149,6 @@ async def lifespan(_: FastAPI):
     motor_thread = threading.Thread(target=rss_fetcher_thread, daemon=True)
     motor_thread.start()
 
-    # alert_thread = threading.Thread(target=alert_checker_thread, daemon=True)
-    # alert_thread.start()
-
     yield
     scheduler.shutdown()
 
@@ -160,13 +157,6 @@ def rss_fetcher_thread():
     time.sleep(5)
     while True:
         rss_fetcher_engine()
-        time.sleep(900)  # 15 minutos
-
-
-def alert_checker_thread():
-    time.sleep(10)  # Desfase para asegurar que haya noticias primero
-    while True:
-        run_alert_matching()
         time.sleep(900)  # 15 minutos
 
 
