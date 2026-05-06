@@ -137,11 +137,23 @@ def normalize_published_at(entry) -> str:
     return datetime.now(UTC).isoformat()
 
 
+def schedule_existing_alerts() -> None:
+    """Rehidrata tareas del scheduler para alertas ya guardadas en BD."""
+    with SessionLocal() as db:
+        alerts = list(db.scalars(select(db_models.Alert)))
+        for alert in alerts:
+            try:
+                programar_alerta(alert.id, alert.cron_expression)
+            except Exception as e:
+                print(f"[SCHEDULER] No se pudo programar alerta {alert.id}: {e}")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Inicializa datos base y arranca servicios auxiliares al levantar la app."""
     scheduler.start()
     create_seed_data()
+    schedule_existing_alerts()
     if should_configure_local_elasticsearch():
         configure_local_elasticsearch()
     check_elastic_connection()

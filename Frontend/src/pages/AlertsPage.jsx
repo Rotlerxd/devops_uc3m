@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { getAlerts, createAlert, deleteAlert, generateSynonyms, warmupSynonyms } from '../services/alertsService';
-import { getCategories } from '../services/sourcesService';
+import { getCategories, getChannels, getSources } from '../services/sourcesService';
 
 const MIN_DESCRIPTORS = 3;
 const MAX_DESCRIPTORS = 10;
@@ -23,6 +23,7 @@ export default function AlertsPage() {
 
   const [alerts, setAlerts] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [channels, setChannels] = useState([]);
   const [error, setError] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [synonymLoading, setSynonymLoading] = useState(false);
@@ -35,6 +36,7 @@ export default function AlertsPage() {
     cron_preset: '0 0 * * *',
     cron_expression: '0 0 * * *',
     category_ids: [],
+    rss_channel_ids: [],
   });
 
   const parseDescriptors = (descriptorsRaw) => {
@@ -75,9 +77,28 @@ export default function AlertsPage() {
     }
   };
 
+  const loadChannels = async () => {
+    try {
+      const sources = await getSources(token);
+      const channelsBySource = await Promise.all(
+        sources.map(async (source) => {
+          const sourceChannels = await getChannels(token, source.id);
+          return sourceChannels.map((channel) => ({
+            ...channel,
+            source_name: source.name,
+          }));
+        })
+      );
+      setChannels(channelsBySource.flat());
+    } catch {
+      // no rompemos la página si falla
+    }
+  };
+
   useEffect(() => {
     fetchAlerts();
     loadCategories();
+    loadChannels();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -95,6 +116,14 @@ export default function AlertsPage() {
       ? formData.category_ids.filter((id) => id !== cat.id)
       : [...formData.category_ids, cat.id];
     setFormData({ ...formData, category_ids: nextIds });
+  };
+
+  const toggleChannel = (channel) => {
+    const exists = formData.rss_channel_ids.includes(channel.id);
+    const nextIds = exists
+      ? formData.rss_channel_ids.filter((id) => id !== channel.id)
+      : [...formData.rss_channel_ids, channel.id];
+    setFormData({ ...formData, rss_channel_ids: nextIds });
   };
 
   const handleCreate = async (e) => {
@@ -118,9 +147,7 @@ export default function AlertsPage() {
       .filter((c) => formData.category_ids.includes(c.id))
       .map((c) => ({ code: c.source || 'IPTC', label: c.name }));
 
-    const payloadCategories = selectedCategories.length > 0
-      ? selectedCategories
-      : [{ code: 'IPTC', label: 'General' }];
+    const payloadCategories = selectedCategories.length > 0 ? selectedCategories : [];
 
     try {
       await createAlert(user.id, token, {
@@ -128,6 +155,7 @@ export default function AlertsPage() {
         descriptors: parsedDescriptors,
         cron_expression: formData.cron_expression,
         categories: payloadCategories,
+        rss_channels_ids: formData.rss_channel_ids.map(String),
       });
       setShowModal(false);
       setFormData({
@@ -136,6 +164,7 @@ export default function AlertsPage() {
         cron_preset: '0 0 * * *',
         cron_expression: '0 0 * * *',
         category_ids: [],
+        rss_channel_ids: [],
       });
       setSynonymSuggestions([]);
       fetchAlerts();
@@ -408,10 +437,38 @@ export default function AlertsPage() {
                   </div>
 
                   <div className="mb-3">
+                    <label className="form-label">CANALES RSS</label>
+                    {channels.length === 0 ? (
+                      <div className="text-muted small">
+                        No hay canales RSS disponibles.
+                      </div>
+                    ) : (
+                      <div className="d-flex flex-wrap gap-2">
+                        {channels.map((channel) => {
+                          const selected = formData.rss_channel_ids.includes(channel.id);
+                          return (
+                            <button
+                              type="button"
+                              key={channel.id}
+                              className={`btn btn-sm ${selected ? 'btn-primary' : 'btn-outline-primary'}`}
+                              onClick={() => toggleChannel(channel)}
+                            >
+                              {channel.source_name} #{channel.id}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <small className="text-muted d-block mt-1">
+                      Si no seleccionas ninguno, la alerta buscará en todos los canales.
+                    </small>
+                  </div>
+
+                  <div className="mb-3">
                     <label className="form-label">CATEGORÍAS IPTC</label>
                     {categories.length === 0 ? (
                       <div className="text-muted small">
-                        No hay categorías IPTC disponibles. Se usará "General" por defecto.
+                        No hay categorías IPTC disponibles.
                       </div>
                     ) : (
                       <div className="d-flex flex-wrap gap-2">
