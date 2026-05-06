@@ -7,7 +7,9 @@
 
 ## Overview
 
-NEWSRADAR uses **GitHub Actions** for CI/CD. The pipeline runs on every push to `main` and on pull requests.
+NEWSRADAR uses **GitHub Actions** for CI/CD.
+- CI pipeline runs on every push to `main` and on pull requests.
+- CD release pipeline runs on semantic version tags (`vMAJOR.MINOR.PATCH`) plus manual dispatch reruns.
 
 ### Pipeline stages
 
@@ -74,14 +76,27 @@ push/PR → ┌──────────────┐
 
 ### cd.yml — Continuous Deployment
 
-**Triggers:** push to `main`, manual dispatch
+**Triggers:** push tags `v*.*.*`, manual dispatch
 
 **Jobs:**
 
 | Job | What it does |
 |---|---|
-| `build-and-push` | Build and push Docker image to GHCR |
-| `deploy` | Placeholder for deployment steps |
+| `build-and-push` | Validate tag format, build and push backend Docker image to GHCR, create GitHub Release |
+
+### release-tag.yml — Automatic release tagging
+
+**Triggers:** pull request closed on `main` (merged only)
+
+**Behavior:**
+- Reads PR labels and accepts exactly one of:
+  - `release:patch`
+  - `release:minor`
+  - `release:major`
+- Computes next semantic version from latest existing `v*.*.*` tag.
+- Creates and pushes new release tag on merge commit.
+- If no release label is present, no tag is created.
+- Manual tags are always supported and use same CD workflow.
 
 ### docs.yml — Documentation pipeline
 

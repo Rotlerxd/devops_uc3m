@@ -103,7 +103,7 @@ pre-commit install
 
 ## CI/CD
 
-GitHub Actions runs on every push to `main` and on pull requests:
+GitHub Actions CI runs on every push to `main` and on pull requests:
 
 - **Backend:** Ruff lint, Ty type check, pytest unit + integration tests
 - **Frontend:** Vitest tests, build check
@@ -111,6 +111,14 @@ GitHub Actions runs on every push to `main` and on pull requests:
 - **Security:** pip-audit, npm audit, Trivy container scan
 - **Quality:** SonarQube analysis
 - **Docs:** MkDocs build (PR) + deploy a GitHub Pages (main)
+
+CD releases are tag-driven:
+- Manual release: `git tag vX.Y.Z && git push origin vX.Y.Z`
+- Automatic release tag on merged PR to `main` when PR has exactly one label:
+  - `release:patch`
+  - `release:minor`
+  - `release:major`
+- PRs without release label do not create a version tag.
 
 See [docs/deployment/cicd.md](docs/deployment/cicd.md) for full pipeline details.
 
