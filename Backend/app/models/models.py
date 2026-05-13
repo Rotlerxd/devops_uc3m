@@ -77,7 +77,7 @@ class Category(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
     source: Mapped[str] = mapped_column(String, default="IPTC", nullable=False)
 
-    channels: Mapped[list[RSSChannel]] = relationship("RSSChannel", back_populates="category")
+    channels: Mapped[list[RSSChannel]] = relationship("RSSChannel", back_populates="category", cascade="all, delete-orphan")
 
 
 class InformationSource(Base):

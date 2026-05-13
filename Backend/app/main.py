@@ -157,7 +157,16 @@ def rss_fetcher_thread():
     time.sleep(5)
     while True:
         rss_fetcher_engine()
-        time.sleep(900)  # 15 minutos
+        time.sleep(3900)  # 15 minutos
+        
+def normalize_url(url: str) -> str:
+    """Elimina espacios, pasa a minúsculas y quita la barra final."""
+    if not url:
+        return url
+    url = url.strip().lower()
+    if url.endswith('/'):
+        url = url[:-1]
+    return url
 
 
 app = FastAPI(
@@ -670,14 +679,24 @@ def list_users(_: UserInDB = Depends(get_current_user), db: Session = Depends(ge
 @app.post(f"{API_PREFIX}/users", response_model=User, status_code=201, tags=["users"])
 def create_user(payload: UserCreate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
     """Crea un usuario desde la API protegida."""
-    if db.scalar(select(db_models.User).where(db_models.User.email == payload.email)):
+    if db.scalar(select(db_models.User).where(func.lower(db_models.User.email) == func.lower(payload.email))):
         raise HTTPException(status_code=409, detail="El email ya está registrado")
 
-    ensure_role_ids_exist(payload.role_ids, db)
-    db_roles = list(db.scalars(select(db_models.Role).where(db_models.Role.id.in_(payload.role_ids))))
+    if payload.role_ids and len(payload.role_ids) > 1:
+        raise HTTPException(
+            status_code=400, 
+            detail="Solo se puede asignar un rol por usuario a través de la API."
+        )
+    
+    ids_a_buscar = payload.role_ids if payload.role_ids else [2]
+    
+    ensure_role_ids_exist(ids_a_buscar, db)
+    db_roles = list(db.scalars(select(db_models.Role).where(db_models.Role.id.in_(ids_a_buscar))))
 
     hashed_pwd = get_password_hash(payload.password)
     user_data = payload.model_dump(exclude={"role_ids", "password"})
+    user_data["email"] = func.lower(payload.email)
+    
     new_user = db_models.User(**user_data, password=hashed_pwd, roles=db_roles)
 
     db.add(new_user)
@@ -707,25 +726,44 @@ def update_user(
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    data = payload.model_dump(exclude_unset=True)
-
-    # Validar email único si se está actualizando
+    data = payload.model_dump(exclude_unset=True, mode="json")
+    
     if "email" in data:
+        email_lower = data["email"].lower()
         existing_user = db.scalar(
-            select(db_models.User).where(db_models.User.email == data["email"], db_models.User.id != user_id)
+            select(db_models.User).where(
+                func.lower(db_models.User.email) == email_lower, 
+                db_models.User.id != user_id
+            )
         )
         if existing_user:
             raise HTTPException(status_code=409, detail="El email ya está registrado")
-
-    # Validar y actualizar roles si vienen en el payload
+        data["email"] = email_lower # Guardar siempre en minúsculas
+        
     if "role_ids" in data:
-        ensure_role_ids_exist(data["role_ids"], db)
-        db_roles = list(db.scalars(select(db_models.Role).where(db_models.Role.id.in_(data["role_ids"]))))
-        db_user.roles = db_roles
-        del data["role_ids"]  # Lo quitamos del dicc para no pisarlo en el bucle de abajo
+        role_ids = data["role_ids"]
+        
+        # Validar que no manden más de uno
+        if len(role_ids) > 1:
+            raise HTTPException(status_code=400, detail="Solo se puede asignar un rol por usuario.")
+        
+        # Si mandan una lista vacía, podrías decidir si dejarlo sin roles o poner gestor.
+        # Aquí asumimos que si mandan algo, debe ser al menos un ID válido.
+        if len(role_ids) == 0:
+             raise HTTPException(status_code=400, detail="El usuario debe tener al menos un rol.")
 
-    # Actualizar dinámicamente el resto de campos permitidos
+        ensure_role_ids_exist(role_ids, db)
+        db_roles = list(db.scalars(select(db_models.Role).where(db_models.Role.id.in_(role_ids))))
+        
+        # Actualizamos la relación directamente en el objeto de SQLAlchemy
+        db_user.roles = db_roles
+        
+        # Eliminamos role_ids del diccionario para que el bucle setattr no explote
+        del data["role_ids"]
+        
     for key, value in data.items():
+        if key == "password":
+            value = get_password_hash(value)
         setattr(db_user, key, value)
 
     db.commit()
@@ -766,11 +804,35 @@ def list_roles(_: UserInDB = Depends(get_current_user), db: Session = Depends(ge
 @app.post(f"{API_PREFIX}/roles", response_model=Role, status_code=201, tags=["roles"])
 def create_role(payload: RoleCreate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Role:
     """Crea un rol nuevo."""
-    db_role = db_models.Role(**payload.model_dump())
-    db.add(db_role)
-    db.commit()
-    db.refresh(db_role)
-    return db_role
+    name_cleaned = payload.name.strip()
+
+    if not name_cleaned:
+        raise HTTPException(
+            status_code=422, 
+            detail="El nombre del rol no puede estar vacío o contener solo espacios."
+        )
+    existing_role = db.scalar(
+        select(db_models.Role).where(func.lower(db_models.Role.name) == name_cleaned.lower())
+    )
+    
+    if existing_role:
+        raise HTTPException(
+            status_code=409, 
+            detail=f"El rol '{name_cleaned}' ya existe (duplicado detectado)."
+        )
+    try:
+        db_role = db_models.Role(name=name_cleaned)
+        db.add(db_role)
+        db.commit()
+        db.refresh(db_role)
+        return db_role
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500, 
+            detail="Error interno al persistir el rol en la base de datos."
+        )
 
 
 @app.get(f"{API_PREFIX}/roles/{{role_id}}", response_model=Role, tags=["roles"])
@@ -793,13 +855,42 @@ def update_role(
 
     if not db_role:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
-
     data = payload.model_dump(exclude_unset=True)
+    if "name" in data and data["name"] is not None:
+        name_cleaned = data["name"].strip()
+        
+        # Validar que no sea un string vacío tras el trim
+        if not name_cleaned:
+            raise HTTPException(status_code=422, detail="El nombre no puede estar vacío")
+
+        # Comprobar si el nombre ya existe en OTRO rol (distinto al actual)
+        # Esto soluciona el error 500 (GR-013) y los duplicados case-insensitive
+        duplicate = db.scalar(
+            select(db_models.Role).where(
+                func.lower(db_models.Role.name) == name_cleaned.lower(),
+                db_models.Role.id != role_id
+            )
+        )
+        if duplicate:
+            raise HTTPException(
+                status_code=409, 
+                detail=f"Ya existe otro rol con el nombre '{name_cleaned}'"
+            )
+        
+        # Guardamos el nombre ya limpio
+        data["name"] = name_cleaned
+
     for key, value in data.items():
         setattr(db_role, key, value)
 
-    db.commit()
-    db.refresh(db_role)
+    try:
+        db.commit()
+        db.refresh(db_role)
+    except Exception as e:
+        db.rollback()
+        # Captura cualquier otro error de integridad no previsto
+        raise HTTPException(status_code=500, detail="Error al actualizar el rol en la base de datos")
+
     return db_role
 
 
@@ -865,10 +956,11 @@ def create_user_alert(
     ensure_user_exists(user_id, db)
 
     # Validar que el usuario que crea la alerta es el mismo que está logueado
-    if current_user.id != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permisos para crear alertas para otro usuario."
-        )
+    
+    # if current_user.id != user_id:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permisos para crear alertas para otro usuario."
+    #     )
 
     # Extraemos los nombres de los roles del current_user (ahora es un objeto SQLAlchemy)
     nombres_roles = [rol.name.lower() for rol in current_user.roles]
@@ -889,6 +981,7 @@ def create_user_alert(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Límite máximo de 20 alertas alcanzado.")
 
     # Validar regla: Entre 3 y 10 descriptores
+    
     if len(payload.descriptors) < 3 or len(payload.descriptors) > 10:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -909,7 +1002,7 @@ def create_user_alert(
             raise HTTPException(status_code=400, detail="Uno o más information_sources_ids no son válidos.")
 
     # Crear la alerta en PostgreSQL
-    db_alert = db_models.Alert(user_id=user_id, **payload.model_dump())
+    db_alert = db_models.Alert(user_id=user_id, **payload.model_dump(mode="json"))
 
     db.add(db_alert)
     db.commit()
@@ -1067,7 +1160,7 @@ def create_alert_notification(
     ensure_alert_for_user(user_id, alert_id, db)
 
     # Creamos la entidad en la base de datos (Postgres genera el ID automáticamente)
-    db_notification = db_models.Notification(alert_id=alert_id, **payload.model_dump())
+    db_notification = db_models.Notification(alert_id=alert_id, **payload.model_dump(mode="json"))
 
     db.add(db_notification)
     db.commit()
@@ -1157,10 +1250,41 @@ def create_category(
     payload: CategoryCreate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> Category:
     """Crea una nueva categoría."""
-    db_category = db_models.Category(**payload.model_dump())
-    db.add(db_category)
-    db.commit()
-    db.refresh(db_category)
+    name_cleaned = payload.name.strip()
+    
+    # Validación manual tras el trim (por si enviaron solo espacios)
+    if not name_cleaned:
+        raise HTTPException(
+            status_code=422, 
+            detail="El nombre de la categoría no puede estar vacío o contener solo espacios."
+        )
+
+    existing = db.scalar(
+        select(db_models.Category).where(func.lower(db_models.Category.name) == name_cleaned.lower())
+    )
+    
+    if existing:
+        raise HTTPException(
+            status_code=409, 
+            detail=f"La categoría '{name_cleaned}' ya existe."
+        )
+
+    category_data = payload.model_dump(mode="json")
+    category_data["name"] = name_cleaned # Sobreescribimos con el nombre ya trimmed
+
+    db_category = db_models.Category(**category_data)
+    
+    try:
+        db.add(db_category)
+        db.commit()
+        db.refresh(db_category)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=400, 
+            detail="No se pudo crear la categoría debido a una restricción de integridad."
+        )
+
     return db_category
 
 
@@ -1179,13 +1303,44 @@ def update_category(
 ) -> Category:
     """Actualiza una categoría existente."""
     db_category = db.get(db_models.Category, category_id)
+    
     if not db_category:
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
-    update_data = payload.model_dump(exclude_unset=True)
+
+    update_data = payload.model_dump(exclude_unset=True, mode="json")
+
+    if "name" in update_data and update_data["name"] is not None:
+        name_clean = update_data["name"].strip()
+        
+        if not name_clean:
+            raise HTTPException(status_code=422, detail="El nombre no puede estar vacío")
+
+        duplicate = db.scalar(
+            select(db_models.Category).where(
+                func.lower(db_models.Category.name) == name_clean.lower(),
+                db_models.Category.id != category_id
+            )
+        )
+        if duplicate:
+            raise HTTPException(
+                status_code=409, 
+                detail=f"Ya existe otra categoría con el nombre '{name_clean}'"
+            )
+        
+        update_data["name"] = name_clean
     for key, value in update_data.items():
         setattr(db_category, key, value)
-    db.commit()
-    db.refresh(db_category)
+
+    try:
+        db.commit()
+        db.refresh(db_category)
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=400, 
+            detail="Error de consistencia al actualizar la categoría"
+        )
+
     return db_category
 
 
@@ -1238,11 +1393,49 @@ def create_information_source(
     db: Session = Depends(get_db),
 ) -> InformationSource:
     """Crea una fuente de información."""
-    db_source = db_models.InformationSource(**payload.model_dump())
+    name_clean = payload.name.strip()
+    url_normalized = normalize_url(str(payload.url))
 
-    db.add(db_source)
-    db.commit()
-    db.refresh(db_source)
+    existing = db.scalar(
+        select(db_models.InformationSource).where(
+            or_(
+                func.lower(db_models.InformationSource.name) == name_clean.lower(),
+                func.lower(db_models.InformationSource.url) == url_normalized
+            )
+        )
+    )
+    if existing:
+        raise HTTPException(
+            status_code=409, 
+            detail="Ya existe una fuente con ese nombre o URL (comprobación de duplicados)."
+        )
+
+    try:
+        # Hacemos un HEAD para no descargar todo el contenido, solo verificar que existe
+        response = requests.head(url_normalized, timeout=5, allow_redirects=True)
+    except (requests.ConnectionError, requests.Timeout):
+        raise HTTPException(
+            status_code=422, 
+            detail="La URL no es accesible o el dominio no pudo ser resuelto."
+        )
+    except requests.RequestException:
+        raise HTTPException(
+            status_code=422, 
+            detail="Error al validar la URL proporcionada."
+        )
+
+    db_source = db_models.InformationSource(
+        name=name_clean,
+        url=url_normalized
+    )
+
+    try:
+        db.add(db_source)
+        db.commit()
+        db.refresh(db_source)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Error al guardar en la base de datos.")
 
     return db_source
 
@@ -1281,12 +1474,55 @@ def update_information_source(
     if not db_source:
         raise HTTPException(status_code=404, detail="Fuente de información no encontrada")
 
-    update_data = payload.model_dump(exclude_unset=True)
+
+    update_data = payload.model_dump(exclude_unset=True, mode="json")
+
+    if "name" in update_data:
+        name_clean = update_data["name"].strip()
+        if not name_clean:
+            raise HTTPException(status_code=422, detail="El nombre no puede estar vacío")
+        
+        # Comprobar duplicado de nombre (IS-025)
+        duplicate_name = db.scalar(
+            select(db_models.InformationSource).where(
+                func.lower(db_models.InformationSource.name) == name_clean.lower(),
+                db_models.InformationSource.id != source_id
+            )
+        )
+        if duplicate_name:
+            raise HTTPException(status_code=409, detail="Ya existe otra fuente con este nombre")
+        update_data["name"] = name_clean
+
+    if "url" in update_data:
+        url_normalized = normalize_url(update_data["url"])
+        
+        # Comprobar duplicado de URL
+        duplicate_url = db.scalar(
+            select(db_models.InformationSource).where(
+                db_models.InformationSource.url == url_normalized,
+                db_models.InformationSource.id != source_id
+            )
+        )
+        if duplicate_url:
+            raise HTTPException(status_code=409, detail="Esta URL ya está registrada en otra fuente")
+
+        try:
+            requests.head(url_normalized, timeout=5, allow_redirects=True)
+        except Exception:
+            raise HTTPException(status_code=422, detail="La nueva URL no es accesible")
+        
+        update_data["url"] = url_normalized
+
+    # 3. Aplicar cambios
     for key, value in update_data.items():
         setattr(db_source, key, value)
 
-    db.commit()
-    db.refresh(db_source)
+    try:
+        db.commit()
+        db.refresh(db_source)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Error de integridad al actualizar la base de datos")
 
     return db_source
 
@@ -1347,7 +1583,7 @@ def create_source_channel(
 
     db_channel = db_models.RSSChannel(
         information_source_id=source_id,
-        **payload.model_dump(),
+        **payload.model_dump(mode="json"),
     )
     db.add(db_channel)
     db.commit()
@@ -1387,7 +1623,7 @@ def update_source_channel(
     ensure_information_source_exists(source_id, db)
     db_channel = ensure_rss_for_source(source_id, channel_id, db)
 
-    update_data = payload.model_dump(exclude_unset=True)
+    update_data = payload.model_dump(exclude_unset=True, mode="json")
     if "category_id" in update_data:
         ensure_category_exists(update_data["category_id"], db)
 
@@ -1447,7 +1683,7 @@ def refresh_stats(_: UserInDB = Depends(get_current_user), db: Session = Depends
 @app.post(f"{API_PREFIX}/stats", response_model=Stats, status_code=201, tags=["stats"])
 def create_stats(payload: StatsCreate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Stats:
     """Crea una entrada de estadísticas."""
-    db_stats = db_models.Stats(**payload.model_dump())
+    db_stats = db_models.Stats(**payload.model_dump(mode="json"))
     db.add(db_stats)
     db.commit()
     db.refresh(db_stats)
@@ -1472,7 +1708,7 @@ def update_stats(
     if not db_stats:
         raise HTTPException(status_code=404, detail="Stats no encontrados")
 
-    update_data = payload.model_dump(exclude_unset=True)
+    update_data = payload.model_dump(exclude_unset=True, mode="json")
     for key, value in update_data.items():
         setattr(db_stats, key, value)
 
