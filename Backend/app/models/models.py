@@ -73,7 +73,7 @@ class Notification(Base):
 class Category(Base):
     __tablename__ = "categories"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    id: Mapped[str] = mapped_column(String(120), primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
     source: Mapped[str] = mapped_column(String, default="IPTC", nullable=False)
 
@@ -99,7 +99,7 @@ class RSSChannel(Base):
     information_source_id: Mapped[int] = mapped_column(
         ForeignKey("information_sources.id", ondelete="CASCADE"), nullable=False
     )
-    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"), nullable=False)
+    category_id: Mapped[str] = mapped_column(ForeignKey("categories.id"), nullable=False)
     url: Mapped[str] = mapped_column(String, nullable=False)
 
     source: Mapped[InformationSource] = relationship("InformationSource", back_populates="channels")

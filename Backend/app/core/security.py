@@ -37,7 +37,7 @@ GMAIL_PASS = os.getenv("GMAIL_PASS")
 
 # --- Configuración de bcrypt ---
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=4)
 
 
 # --- FUNCIONES DE CONTRASEÑAS ---

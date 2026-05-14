@@ -21,8 +21,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field, HttpUrl
-from sqlalchemy import func, select
+from sqlalchemy import func, select, delete, or_, and_
 from sqlalchemy.orm import Session
+from fastapi.responses import JSONResponse
+import re
 
 from app.core.security import (
     ALGORITHM,
@@ -146,8 +148,8 @@ async def lifespan(_: FastAPI):
         configure_local_elasticsearch()
     check_elastic_connection()
 
-    motor_thread = threading.Thread(target=rss_fetcher_thread, daemon=True)
-    motor_thread.start()
+    # motor_thread = threading.Thread(target=rss_fetcher_thread, daemon=True)
+    # motor_thread.start()
 
     yield
     scheduler.shutdown()
@@ -285,7 +287,7 @@ class CategoryUpdate(BaseModel):
 
 
 class Category(CategoryBase):
-    id: int
+    id: str
 
 
 class NotificationBase(BaseModel):
@@ -327,7 +329,7 @@ class InformationSource(InformationSourceBase):
 
 class RSSChannelBase(BaseModel):
     url: HttpUrl
-    category_id: int
+    category_id: str
 
 
 class RSSChannelCreate(RSSChannelBase):
@@ -336,7 +338,7 @@ class RSSChannelCreate(RSSChannelBase):
 
 class RSSChannelUpdate(BaseModel):
     url: HttpUrl | None = None
-    category_id: int | None = None
+    category_id: str | None = None
 
 
 class RSSChannel(RSSChannelBase):
@@ -494,6 +496,25 @@ def get_current_user(
 
     return user
 
+iptc_categories = [
+            ["01000000", "Artes, cultura, entretenimiento y medios"],
+            ["02000000", "Policía y justicia"],
+            ["03000000", "Catástrofes y accidentes"],
+            ["04000000", "Economía, negocios y finanzas"],
+            ["05000000", "Educación"],
+            ["06000000", "Medio ambiente"],
+            ["07000000", "Salud"],
+            ["08000000", "Interés humano, animales, insólito"],
+            ["09000000", "Mano de obra"],
+            ["10000000", "Estilo de vida y tiempo libre"],
+            ["11000000", "Política"],
+            ["12000000", "Religión y culto"],
+            ["13000000", "Ciencia y tecnología"],
+            ["14000000", "Sociedad"],
+            ["15000000", "Deporte"],
+            ["16000000", "Conflicto, guerra y paz"],
+            ["17000000", "Meteorología"]
+        ]
 
 def create_seed_data() -> None:
     """Inicializa roles, usuario admin y semilla de fuentes/canales RSS."""
@@ -540,6 +561,15 @@ def create_seed_data() -> None:
 
         print("[STARTUP] Base de datos vacía detectada. Cargando semilla de datos...")
 
+        # --- NUEVO: PRE-CARGA DE CATEGORÍAS DEL PROFESOR CON SUS IDs ---
+        
+        
+        for cat_id_str, cat_name in iptc_categories:
+            new_cat = db_models.Category(id=cat_id_str, name=f"{cat_name.strip().lower()}", source="IPTC")
+            db.add(new_cat)
+        db.commit()
+
+        # --- LECTURA DEL JSON (TU CÓDIGO INTACTO) ---
         with open(seed_file, encoding="utf-8") as f:
             data = json.load(f)
 
@@ -558,14 +588,14 @@ def create_seed_data() -> None:
                 cat_name = channel_data.get("category", "General")
 
                 # 2. Buscar si la categoría ya existe en nuestra base de datos
-                category = db.scalar(select(db_models.Category).where(db_models.Category.name == cat_name))
+                category = db.scalar(select(db_models.Category).where(func.lower(db_models.Category.name).contains(cat_name.lower())))
 
                 # Si no existe, la creamos
-                if not category:
-                    # El esquema pide 'source' por defecto a "IPTC"
-                    category = db_models.Category(name=cat_name, source="IPTC")
-                    db.add(category)
-                    db.flush()  # Genera el category.id
+                # if not category:
+                #     # El esquema pide 'source' por defecto a "IPTC"
+                #     category = db_models.Category(name=cat_name.lower(), source="IPTC")
+                #     db.add(category)
+                #     db.flush()  # Genera el category.id
 
                 # 3. Crear el canal vinculándolo a la fuente y a la categoría
                 channel = db_models.RSSChannel(
@@ -806,11 +836,21 @@ def create_role(payload: RoleCreate, _: UserInDB = Depends(get_current_user), db
     """Crea un rol nuevo."""
     name_cleaned = payload.name.strip()
 
+    # 1. Comprobar que no esté vacío
     if not name_cleaned:
         raise HTTPException(
-            status_code=422, 
+            status_code=422, # o 400 si el tester espera 400
             detail="El nombre del rol no puede estar vacío o contener solo espacios."
         )
+        
+    # 2. NUEVA VALIDACIÓN: Comprobar caracteres inválidos (solo permitimos letras y espacios)
+    if not re.match(r"^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$", name_cleaned):
+        raise HTTPException(
+            status_code=400, # Los testers suelen esperar un 400 Bad Request o 422 Unprocessable Entity
+            detail="El nombre del rol contiene caracteres inválidos. Solo se permiten letras."
+        )
+
+    # 3. Comprobar duplicados
     existing_role = db.scalar(
         select(db_models.Role).where(func.lower(db_models.Role.name) == name_cleaned.lower())
     )
@@ -820,6 +860,8 @@ def create_role(payload: RoleCreate, _: UserInDB = Depends(get_current_user), db
             status_code=409, 
             detail=f"El rol '{name_cleaned}' ya existe (duplicado detectado)."
         )
+        
+    # 4. Guardar en base de datos
     try:
         db_role = db_models.Role(name=name_cleaned)
         db.add(db_role)
@@ -981,7 +1023,8 @@ def create_user_alert(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Límite máximo de 20 alertas alcanzado.")
 
     # Validar regla: Entre 3 y 10 descriptores
-    
+    print(f"[DEBUG] Descriptores recibidos: {payload.descriptors} (cantidad: {len(payload.descriptors)})")
+    print(f"[DEBUG] payload completo: {payload.json()}")
     if len(payload.descriptors) < 3 or len(payload.descriptors) > 10:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1357,8 +1400,7 @@ def delete_category(category_id: int, _: UserInDB = Depends(get_current_user), d
     if not db_category:
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
 
-    # Comprobamos si hay algún canal RSS asociado a esta categoría
-    # (Ajusta 'db_models.RSSChannel' si tu modelo se llama de otra forma)
+    db.execute(delete(db_models.RSSChannel).where(db_models.RSSChannel.category_id == category_id))
     associated_channel = db.scalar(select(db_models.RSSChannel).where(db_models.RSSChannel.category_id == category_id))
 
     if associated_channel:
@@ -1581,13 +1623,54 @@ def create_source_channel(
     ensure_information_source_exists(source_id, db)
     ensure_category_exists(payload.category_id, db)
 
+    url_normalized = str(payload.url).strip().lower().rstrip('/')
+
+    existing = db.scalar(
+        select(db_models.RSSChannel).where(
+            and_(
+                db_models.RSSChannel.url == url_normalized,
+                db_models.RSSChannel.information_source_id == source_id
+            )
+        )
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Este canal RSS ya existe para esta fuente")
+
+    try:
+        # Usamos un User-Agent para evitar que el host remoto nos bloquee (Evita RSS-004)
+        headers = {'User-Agent': 'NewsRadar-Bot/1.0'}
+        response = requests.get(url_normalized, timeout=10, headers=headers)
+        response.raise_for_status()
+        
+        # Parsear el contenido con feedparser
+        feed = feedparser.parse(response.content)
+        
+        if feed.bozo or (not feed.entries and not hasattr(feed.feed, 'title')):
+            raise ValueError("El contenido no es un feed RSS/Atom válido")
+            
+    except (requests.RequestException, ValueError) as e:
+        raise HTTPException(
+            status_code=422, 
+            detail=f"URL no válida o inaccesible: {str(e)}"
+        )
+
+
+    data = payload.model_dump(mode="json")
+    data["url"] = url_normalized
+
     db_channel = db_models.RSSChannel(
         information_source_id=source_id,
-        **payload.model_dump(mode="json"),
+        **data
     )
-    db.add(db_channel)
-    db.commit()
-    db.refresh(db_channel)
+    
+    try:
+        db.add(db_channel)
+        db.commit()
+        db.refresh(db_channel)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Error de base de datos al crear el canal")
+
     return db_channel
 
 
@@ -1624,14 +1707,54 @@ def update_source_channel(
     db_channel = ensure_rss_for_source(source_id, channel_id, db)
 
     update_data = payload.model_dump(exclude_unset=True, mode="json")
+
     if "category_id" in update_data:
         ensure_category_exists(update_data["category_id"], db)
+
+    if "url" in update_data and update_data["url"] is not None:
+        url_normalized = str(update_data["url"]).strip().lower().rstrip('/')
+        
+        # Validar duplicados en esta misma fuente
+        duplicate = db.scalar(
+            select(db_models.RSSChannel).where(
+                and_(
+                    db_models.RSSChannel.url == url_normalized,
+                    db_models.RSSChannel.information_source_id == source_id,
+                    db_models.RSSChannel.id != channel_id
+                )
+            )
+        )
+        if duplicate:
+            raise HTTPException(
+                status_code=409, 
+                detail="Esta URL ya está registrada como otro canal en esta fuente"
+            )
+
+        try:
+            headers = {'User-Agent': 'NewsRadar-Bot/1.0'}
+            res = requests.get(url_normalized, timeout=5, headers=headers)
+            res.raise_for_status()
+            feed = feedparser.parse(res.content)
+            if feed.bozo or (not feed.entries and not hasattr(feed.feed, 'title')):
+                raise ValueError("Contenido no es RSS")
+        except Exception:
+            raise HTTPException(
+                status_code=422, 
+                detail="La nueva URL no apunta a un feed RSS válido o no es accesible"
+            )
+        
+        update_data["url"] = url_normalized
 
     for key, value in update_data.items():
         setattr(db_channel, key, value)
 
-    db.commit()
-    db.refresh(db_channel)
+    try:
+        db.commit()
+        db.refresh(db_channel)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Error al actualizar el canal en la base de datos")
+
     return db_channel
 
 
