@@ -439,7 +439,7 @@ def ensure_information_source_exists(source_id: int, db: Session = Depends(get_d
         raise HTTPException(status_code=404, detail="Fuente de información no encontrada")
 
 
-def ensure_category_exists(category_id: int, db: Session = Depends(get_db)) -> None:
+def ensure_category_exists(category_id: str, db: Session = Depends(get_db)) -> None:
     """Lanza 404 si la categoría no existe."""
     if db.get(db_models.Category, category_id) is None:
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
@@ -1332,7 +1332,7 @@ def create_category(
 
 
 @app.get(f"{API_PREFIX}/categories/{{category_id}}", response_model=Category, tags=["categories"])
-def get_category(category_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Category:
+def get_category(category_id: str, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> Category:
     """Obtiene una categoría por identificador."""
     db_category = db.get(db_models.Category, category_id)
     if not db_category:
@@ -1342,7 +1342,7 @@ def get_category(category_id: int, _: UserInDB = Depends(get_current_user), db: 
 
 @app.put(f"{API_PREFIX}/categories/{{category_id}}", response_model=Category, tags=["categories"])
 def update_category(
-    category_id: int, payload: CategoryUpdate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
+    category_id: str, payload: CategoryUpdate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> Category:
     """Actualiza una categoría existente."""
     db_category = db.get(db_models.Category, category_id)
@@ -1394,7 +1394,7 @@ def update_category(
     response_class=Response,
     tags=["categories"],
 )
-def delete_category(category_id: int, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
+def delete_category(category_id: str, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
     """Elimina una categoría si no está asociada a canales RSS."""
     db_category = db.get(db_models.Category, category_id)
     if not db_category:

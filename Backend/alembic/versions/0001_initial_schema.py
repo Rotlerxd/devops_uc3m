@@ -24,7 +24,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.create_table(
         "categories",
-        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("id", sa.String(length=200), primary_key=True),
         sa.Column("name", sa.String(length=120), nullable=False),
         sa.Column("source", sa.String(), nullable=False, server_default="IPTC"),
         sa.UniqueConstraint("name"),
@@ -92,7 +92,7 @@ def upgrade() -> None:
         "rss_channels",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("information_source_id", sa.Integer(), nullable=False),
-        sa.Column("category_id", sa.Integer(), nullable=False),
+        sa.Column("category_id", sa.String(length=200), nullable=False),
         sa.Column("url", sa.String(), nullable=False),
         sa.ForeignKeyConstraint(["category_id"], ["categories.id"]),
         sa.ForeignKeyConstraint(["information_source_id"], ["information_sources.id"], ondelete="CASCADE"),
