@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
-
+import random
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Table, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -65,7 +65,7 @@ class Notification(Base):
     alert_id: Mapped[int] = mapped_column(ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     metrics: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
-    iptc_category: Mapped[str] = mapped_column(String, nullable=False)
+    iptc_category: Mapped[str] = mapped_column(String, nullable=True)
 
     alert: Mapped[Alert] = relationship("Alert", back_populates="notifications")
 

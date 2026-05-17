@@ -23,6 +23,7 @@ from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field, HttpUrl
 from sqlalchemy import func, select, delete, or_, and_
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from fastapi.responses import JSONResponse
 import re
 
@@ -47,6 +48,7 @@ from app.core.synonyms import (
 )
 from app.db.database import SessionLocal, get_db
 from app.models import models as db_models
+
 
 ELASTICSEARCH_URL = "http://localhost:9200"
 NEWS_INDEX = "newsradar_articles"
@@ -274,7 +276,7 @@ class Alert(AlertBase):
 
 class CategoryBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
-    source: str = Field(default="IPTC", pattern="^IPTC$")
+    source: str = Field(..., pattern="^IPTC$")
 
 
 class CategoryCreate(CategoryBase):
@@ -442,9 +444,33 @@ def ensure_information_source_exists(source_id: int, db: Session = Depends(get_d
 def ensure_category_exists(category_id: str, db: Session = Depends(get_db)) -> None:
     """Lanza 404 si la categoría no existe."""
     if db.get(db_models.Category, category_id) is None:
-        raise HTTPException(status_code=404, detail="Categoría no encontrada")
+        raise HTTPException(status_code=400, detail="Categoría no encontrada")
+    
+def ensure_code_name_category_exists(code: str, name: str, db: Session = Depends(get_db)) -> None:
+    """Lanza 404 si no existe una categoría con ese código y nombre."""
+    if db.scalar(
+        select(db_models.Category).where(
+            db_models.Category.id == code, func.lower(db_models.Category.name) == name.lower()
+        )
+    ) is None:
+        raise HTTPException(status_code=400, detail="Categoría no encontrada con ese código y nombre")
 
+def ensure_not_duplicate_alert_name_for_user(user_id: int, name: str, db: Session = Depends(get_db)) -> None:
+    """Lanza 400 si el usuario ya tiene una alerta con ese nombre (ignorando mayúsculas)."""
+    clean_name = name.strip().lower()
+    if db.scalar(
+        select(db_models.Alert).where(
+            db_models.Alert.user_id == user_id, 
+            func.lower(func.trim(db_models.Alert.name)) == clean_name
+        )
+    ):
+        raise HTTPException(
+            status_code=400, 
+            detail="El usuario ya tiene una alerta con ese nombre"
+        )
+    
 
+    
 def ensure_rss_for_source(source_id: int, channel_id: int, db: Session = Depends(get_db)) -> RSSChannel:
     """Obtiene un canal RSS de una fuente concreta o lanza 404."""
     db_channel = db.scalar(
@@ -844,7 +870,7 @@ def create_role(payload: RoleCreate, _: UserInDB = Depends(get_current_user), db
         )
         
     # 2. NUEVA VALIDACIÓN: Comprobar caracteres inválidos (solo permitimos letras y espacios)
-    if not re.match(r"^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$", name_cleaned):
+    if not re.match(r"^[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9 \-_]+$", name_cleaned):
         raise HTTPException(
             status_code=400, # Los testers suelen esperar un 400 Bad Request o 422 Unprocessable Entity
             detail="El nombre del rol contiene caracteres inválidos. Solo se permiten letras."
@@ -996,6 +1022,13 @@ def create_user_alert(
 ) -> Alert:
     """Crea una alerta para el usuario autenticado validando reglas de negocio."""
     ensure_user_exists(user_id, db)
+    ensure_not_duplicate_alert_name_for_user(user_id, payload.name, db)
+    
+    if len(payload.categories) > 1:
+        raise HTTPException(status_code=400, detail="Se debe especificar una categoría para la alerta.")
+
+    for category in payload.categories:
+        ensure_code_name_category_exists(category.code, category.label, db)
 
     # Validar que el usuario que crea la alerta es el mismo que está logueado
     
@@ -1023,13 +1056,27 @@ def create_user_alert(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Límite máximo de 20 alertas alcanzado.")
 
     # Validar regla: Entre 3 y 10 descriptores
-    print(f"[DEBUG] Descriptores recibidos: {payload.descriptors} (cantidad: {len(payload.descriptors)})")
+    #print(f"[DEBUG] Descriptores recibidos: {payload.descriptors} (cantidad: {len(payload.descriptors)})")
     print(f"[DEBUG] payload completo: {payload.json()}")
+    # Primero eliminamos duplicados si es que hay (sinónimos repetidos) y luego validamos la cantidad
+    if payload.descriptors:
+        payload.descriptors = list(dict.fromkeys(payload.descriptors))
+    
+    
+    if len (payload.descriptors) == 0:
+        payload.descriptors = ["", "", ""]
+        
     if len(payload.descriptors) < 3 or len(payload.descriptors) > 10:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="La alerta debe tener entre 3 y 10 descriptores (sinónimos).",
-        )
+        synonyms = generate_synonyms(term=payload.descriptors[0], limit=5, language=DEFAULT_LANGUAGE)
+        print(f"[DEBUG] Sinónimos generados para '{payload.descriptors[0]}': {synonyms}")
+        if len(synonyms) == 0:
+            payload.descriptors += ["", "", ""]  
+        else:
+            payload.descriptors += synonyms
+            payload.descriptors = list(dict.fromkeys(payload.descriptors))
+            payload.descriptors = payload.descriptors[:10]
+            print(f"[DEBUG] Descriptores después de generación de sinónimos: {payload.descriptors} (cantidad: {len(payload.descriptors)})")
+        
 
     # Validar que los IDs de canales RSS e información existen en la base de datos antes de crear la alerta
     if payload.rss_channels_ids:
@@ -1043,6 +1090,14 @@ def create_user_alert(
         )
         if exists_count != len(payload.information_sources_ids):
             raise HTTPException(status_code=400, detail="Uno o más information_sources_ids no son válidos.")
+        
+    if payload.cron_expression:
+        try:
+            validate_cron_expression(payload.cron_expression)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    
+    
 
     # Crear la alerta en PostgreSQL
     db_alert = db_models.Alert(user_id=user_id, **payload.model_dump(mode="json"))
@@ -1094,14 +1149,26 @@ def update_user_alert(
         )
 
     db_alert = ensure_alert_for_user(user_id, alert_id, db)
+    
+    
+    if payload.categories is not None and len(payload.categories) != 1:
+        raise HTTPException(status_code=400, detail="Se debe especificar exactamente una categoría para la alerta.")
+
+    if payload.categories is not None:
+        for category in payload.categories:
+            ensure_code_name_category_exists(category.code, category.label, db)
 
     # Validar regla: Entre 3 y 10 descriptores si se están actualizando
 
-    if (payload.descriptors is not None) and (len(payload.descriptors) < 3 or len(payload.descriptors) > 10):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="La alerta debe tener entre 3 y 10 descriptores (sinónimos).",
-        )
+    #if (payload.descriptors is not None) and (len(payload.descriptors) < 3 or len(payload.descriptors) > 10):
+    #    raise HTTPException(
+    #        status_code=status.HTTP_400_BAD_REQUEST,
+    #        detail="La alerta debe tener entre 3 y 10 descriptores (sinónimos).",
+    #    )
+    try:
+        validate_cron_expression(payload.cron_expression)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
@@ -1141,6 +1208,10 @@ def delete_user_alert(
 
     db.commit()
 
+#import nltk
+#nltk.download('wordnet')
+#nltk.download('omw-1.4')
+#exit()
 
 @app.get(f"{API_PREFIX}/alerts/synonyms", response_model=SynonymResponse, tags=["alerts"])
 async def get_alert_synonyms(
@@ -1183,7 +1254,7 @@ def list_alert_notifications(
     ensure_alert_for_user(user_id, alert_id, db)
 
     # Consultamos las notificaciones en PostgreSQL
-    return list(db.scalars(select(db_models.Notification).where(db_models.Notification.alert_id == alert_id)))
+    return list(db.scalars(select(db_models.Notification).where(db_models.Notification.alert_id == alert_id).order_by(db_models.Notification.timestamp.desc())))
 
 
 @app.post(
@@ -1201,9 +1272,38 @@ def create_alert_notification(
 ) -> Notification:
     """Crea una notificación para una alerta concreta."""
     ensure_alert_for_user(user_id, alert_id, db)
+    if payload.timestamp > datetime.now(UTC):
+        raise HTTPException(status_code=400, detail="La fecha de envío no puede ser futura.")
+    
+    if payload.metrics is None:
+        raise HTTPException(status_code=400, detail="La notificación debe contener al menos una métrica.")
+    
+    if payload.metrics:
+        seen_metric_names = set()
+        for metric in payload.metrics:
+            metric_name = metric.name.strip() 
+            
 
+            if not metric_name:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="Nombre de métrica inválido. No se permiten nombres vacíos."
+                )
+            
+            if metric_name in seen_metric_names:
+                raise HTTPException(status_code=409, detail=f"Métrica duplicada: '{metric_name}'")
+            
+            seen_metric_names.add(metric_name)
+            
+            # 3. Guardamos el valor limpio
+            metric.name = metric_name
+        
+    
+        
+    
     # Creamos la entidad en la base de datos (Postgres genera el ID automáticamente)
     db_notification = db_models.Notification(alert_id=alert_id, **payload.model_dump(mode="json"))
+    
 
     db.add(db_notification)
     db.commit()
@@ -1293,27 +1393,59 @@ def create_category(
     payload: CategoryCreate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> Category:
     """Crea una nueva categoría."""
-    name_cleaned = payload.name.strip()
     
-    # Validación manual tras el trim (por si enviaron solo espacios)
-    if not name_cleaned:
+    # 1. Extraemos los valores de forma segura
+    req_id = getattr(payload, "id", None)
+    req_name = payload.name.strip() if getattr(payload, "name", None) else ""
+
+    # 2. AUTOCOMPLETADO BUSCANDO EN LA LISTA ORIGINAL
+    # Si viene sin nombre pero con un ID:
+    if not req_name and req_id:
+        for item in iptc_categories:
+            if item[0] == req_id:
+                req_name = item[1]
+                break
+                
+    # Si viene sin ID pero con un nombre:
+    if not req_id and req_name:
+        for item in iptc_categories:
+            # Comparamos en minúsculas por si nos lo mandan como "salud" en vez de "Salud"
+            if item[1].lower() == req_name.lower():
+                req_id = item[0]
+                break
+    if req_id and req_name:
+        for item in iptc_categories:
+            # Si el ID es oficial, pero el nombre no es el suyo
+            if item[0] == req_id and item[1].lower() != req_name.lower():
+                raise HTTPException(status_code=400, detail="name-source inconsistente")
+            
+            # Si el nombre es oficial, pero el ID no es el suyo
+            if item[1].lower() == req_name.lower() and item[0] != req_id:
+                raise HTTPException(status_code=400, detail="name-source inconsistente")    
+    # 3. Validaciones habituales
+    if not req_name:
         raise HTTPException(
             status_code=422, 
             detail="El nombre de la categoría no puede estar vacío o contener solo espacios."
         )
 
     existing = db.scalar(
-        select(db_models.Category).where(func.lower(db_models.Category.name) == name_cleaned.lower())
+        select(db_models.Category).where(func.lower(db_models.Category.name) == req_name.lower())
     )
     
     if existing:
         raise HTTPException(
             status_code=409, 
-            detail=f"La categoría '{name_cleaned}' ya existe."
+            detail=f"La categoría '{req_name}' ya existe."
         )
 
-    category_data = payload.model_dump(mode="json")
-    category_data["name"] = name_cleaned # Sobreescribimos con el nombre ya trimmed
+    # 4. Preparamos los datos
+    category_data = payload.model_dump(mode="json", exclude_none=True)
+    category_data["name"] = req_name 
+    
+    # Si autocompletamos el ID, nos aseguramos de incluirlo en el diccionario
+    if req_id:
+        category_data["id"] = req_id
 
     db_category = db_models.Category(**category_data)
     
@@ -1321,11 +1453,18 @@ def create_category(
         db.add(db_category)
         db.commit()
         db.refresh(db_category)
-    except Exception as e:
+    except IntegrityError:
         db.rollback()
         raise HTTPException(
-            status_code=400, 
-            detail="No se pudo crear la categoría debido a una restricción de integridad."
+            status_code=409, 
+            detail="La categoría ya existe o hay un conflicto de integridad."
+        )
+    except Exception as e:
+        db.rollback()
+        print(f"Error crítico en BD al crear categoría: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Error interno del servidor al crear la categoría."
         )
 
     return db_category
@@ -1377,13 +1516,20 @@ def update_category(
     try:
         db.commit()
         db.refresh(db_category)
-    except Exception:
+    except IntegrityError:
         db.rollback()
+        # Capturamos errores de base de datos a nivel profundo por si la validación manual se queda corta
         raise HTTPException(
-            status_code=400, 
-            detail="Error de consistencia al actualizar la categoría"
+            status_code=409, 
+            detail="Conflicto de integridad al actualizar la categoría"
         )
-
+    except Exception as e:
+        db.rollback()
+        print(f"Error crítico en BD al actualizar categoría: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Error interno del servidor al actualizar la categoría"
+        )
     return db_category
 
 
@@ -2114,3 +2260,13 @@ def desprogramar_alerta(alerta_id: int):
     if scheduler.get_job(job_id):
         scheduler.remove_job(job_id)
         print(f"Alerta {alerta_id} desprogramada.")
+
+def validate_cron_expression(cron_str: str):
+    """
+    Valida que una cadena sea una expresión CRON válida de 5 partes:
+    (Minuto, Hora, Día del mes, Mes, Día de la semana)
+    """
+    try:
+        CronTrigger.from_crontab(cron_str)
+    except ValueError as exc:
+        raise ValueError(f"Expresión CRON inválida: {exc}") from exc
