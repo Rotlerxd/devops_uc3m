@@ -631,7 +631,9 @@ def create_seed_data() -> None:
 
                 # 3. Crear el canal vinculándolo a la fuente y a la categoría
                 channel = db_models.RSSChannel(
-                    information_source_id=source.id, url=channel_data["url"], category_id=category.id if category else None
+                    information_source_id=source.id,
+                    url=channel_data["url"],
+                    category_id=category.id if category else None,
                 )
                 db.add(channel)
 
@@ -1393,7 +1395,9 @@ def create_category(
     # 2. AUTOCOMPLETADO Y VALIDACIÓN DE CONSISTENCIA
     # Buscamos si el ID o el Nombre existen en la lista oficial
     official_entry_by_id = next((item for item in iptc_categories if item[0] == clean_id), None)
-    official_entry_by_name = next((item for item in iptc_categories if str(item[1]).lower() == str(req_name).lower()), None)
+    official_entry_by_name = next(
+        (item for item in iptc_categories if str(item[1]).lower() == str(req_name).lower()), None
+    )
 
     # CASO A: Viene ID pero no nombre -> Autocompletamos
     if clean_id and not req_name and official_entry_by_id:
@@ -1766,7 +1770,7 @@ def create_source_channel(
         pass
 
     except requests.exceptions.HTTPError as e:
-        status = e.response.status_code if getattr(e, 'response', None) is not None else "Desconocido/Timeout"
+        status = e.response.status_code if getattr(e, "response", None) is not None else "Desconocido/Timeout"
         raise HTTPException(status_code=422, detail=f"URL inaccesible (Error {status})") from None
 
     except (requests.RequestException, ValueError) as e:
