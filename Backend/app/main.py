@@ -1770,7 +1770,8 @@ def create_source_channel(
         pass
 
     except requests.exceptions.HTTPError as e:
-        status = e.response.status_code if getattr(e, "response", None) is not None else "Desconocido/Timeout"
+        response = getattr(e, "response", None)
+        status = response.status_code if response is not None else "Desconocido/Timeout"
         raise HTTPException(status_code=422, detail=f"URL inaccesible (Error {status})") from None
 
     except (requests.RequestException, ValueError) as e:
