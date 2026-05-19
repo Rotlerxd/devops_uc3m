@@ -595,7 +595,7 @@ def create_seed_data() -> None:
         # --- NUEVO: PRE-CARGA DE CATEGORÍAS DEL PROFESOR CON SUS IDs ---
 
         for cat_id_str, cat_name in iptc_categories:
-            new_cat = db_models.Category(id=cat_id_str, name=f"{cat_name.strip().lower()}", source="IPTC")
+            new_cat = db_models.Category(id=cat_id_str, name=cat_name.strip().lower(), source="IPTC")
             db.add(new_cat)
         db.commit()
 
@@ -631,7 +631,7 @@ def create_seed_data() -> None:
 
                 # 3. Crear el canal vinculándolo a la fuente y a la categoría
                 channel = db_models.RSSChannel(
-                    information_source_id=source.id, url=channel_data["url"], category_id=category.id
+                    information_source_id=source.id, url=channel_data["url"], category_id=category.id if category else None
                 )
                 db.add(channel)
 
@@ -1393,7 +1393,7 @@ def create_category(
     # 2. AUTOCOMPLETADO Y VALIDACIÓN DE CONSISTENCIA
     # Buscamos si el ID o el Nombre existen en la lista oficial
     official_entry_by_id = next((item for item in iptc_categories if item[0] == clean_id), None)
-    official_entry_by_name = next((item for item in iptc_categories if item[1].lower() == req_name.lower()), None)
+    official_entry_by_name = next((item for item in iptc_categories if str(item[1]).lower() == str(req_name).lower()), None)
 
     # CASO A: Viene ID pero no nombre -> Autocompletamos
     if clean_id and not req_name and official_entry_by_id:
@@ -1406,7 +1406,7 @@ def create_category(
     # CASO C: VIENEN AMBOS -> Comprobamos inconsistencia (GC-008)
     elif clean_id and req_name:
         # Si el ID es de IPTC, el nombre DEBE coincidir
-        if official_entry_by_id and official_entry_by_id[1].lower() != req_name.lower():
+        if official_entry_by_id and str(official_entry_by_id[1]).lower() == str(req_name).lower():
             raise HTTPException(status_code=400, detail="name-source inconsistente")
 
         # Si el Nombre es de IPTC, el ID DEBE coincidir
@@ -1428,7 +1428,7 @@ def create_category(
             status_code=422, detail="El nombre de la categoría no puede estar vacío o contener solo espacios."
         )
 
-    existing = db.scalar(select(db_models.Category).where(func.lower(db_models.Category.name) == req_name.lower()))
+    existing = db.scalar(select(db_models.Category).where(func.lower(db_models.Category.name) == str(req_name).lower()))
 
     if existing:
         raise HTTPException(status_code=409, detail=f"La categoría '{req_name}' ya existe.")
@@ -1766,7 +1766,8 @@ def create_source_channel(
         pass
 
     except requests.exceptions.HTTPError as e:
-        raise HTTPException(status_code=422, detail=f"URL inaccesible (Error {e.response.status_code})") from None
+        status = e.response.status_code if getattr(e, 'response', None) else "Desconocido/Timeout"
+        raise HTTPException(status_code=422, detail=f"URL inaccesible (Error {status})") from None
 
     except (requests.RequestException, ValueError) as e:
         raise HTTPException(status_code=422, detail=f"URL no válida o inaccesible: {e!s}") from None
