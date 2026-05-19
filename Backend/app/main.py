@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-import threading
+import re
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -21,11 +21,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field, HttpUrl
-from sqlalchemy import func, select, delete, or_, and_
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from fastapi.responses import JSONResponse
-import re
+from sqlalchemy.orm import Session
 
 from app.core.security import (
     ALGORITHM,
@@ -48,7 +46,6 @@ from app.core.synonyms import (
 )
 from app.db.database import SessionLocal, get_db
 from app.models import models as db_models
-
 
 ELASTICSEARCH_URL = "http://localhost:9200"
 NEWS_INDEX = "newsradar_articles"
@@ -162,7 +159,7 @@ def rss_fetcher_thread():
     while True:
         rss_fetcher_engine()
         time.sleep(3900)  # 15 minutos
-        
+
 def normalize_url(url: str) -> str:
     """Elimina espacios, pasa a minúsculas y quita la barra final."""
     if not url:
@@ -289,7 +286,7 @@ class CategoryUpdate(BaseModel):
 
 
 class Category(CategoryBase):
-    id: str
+    id: int
 
 
 class NotificationBase(BaseModel):
@@ -331,7 +328,7 @@ class InformationSource(InformationSourceBase):
 
 class RSSChannelBase(BaseModel):
     url: HttpUrl
-    category_id: str
+    category_id: int
 
 
 class RSSChannelCreate(RSSChannelBase):
@@ -340,7 +337,7 @@ class RSSChannelCreate(RSSChannelBase):
 
 class RSSChannelUpdate(BaseModel):
     url: HttpUrl | None = None
-    category_id: str | None = None
+    category_id: int | None = None
 
 
 class RSSChannel(RSSChannelBase):
@@ -441,13 +438,21 @@ def ensure_information_source_exists(source_id: int, db: Session = Depends(get_d
         raise HTTPException(status_code=404, detail="Fuente de información no encontrada")
 
 
-def ensure_category_exists(category_id: str, db: Session = Depends(get_db)) -> None:
+def ensure_category_exists(category_id: int, db: Session = Depends(get_db)) -> None:
     """Lanza 404 si la categoría no existe."""
     if db.get(db_models.Category, category_id) is None:
         raise HTTPException(status_code=400, detail="Categoría no encontrada")
-    
-def ensure_code_name_category_exists(code: str, name: str, db: Session = Depends(get_db)) -> None:
+
+def ensure_code_name_category_exists(code: int, name: str, db: Session = Depends(get_db)) -> None:
     """Lanza 404 si no existe una categoría con ese código y nombre."""
+    try:
+        int(code)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail="El código de categoría debe ser un número entero válido"
+        )from None
+
     if db.scalar(
         select(db_models.Category).where(
             db_models.Category.id == code, func.lower(db_models.Category.name) == name.lower()
@@ -460,17 +465,17 @@ def ensure_not_duplicate_alert_name_for_user(user_id: int, name: str, db: Sessio
     clean_name = name.strip().lower()
     if db.scalar(
         select(db_models.Alert).where(
-            db_models.Alert.user_id == user_id, 
+            db_models.Alert.user_id == user_id,
             func.lower(func.trim(db_models.Alert.name)) == clean_name
         )
     ):
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail="El usuario ya tiene una alerta con ese nombre"
         )
-    
 
-    
+
+
 def ensure_rss_for_source(source_id: int, channel_id: int, db: Session = Depends(get_db)) -> RSSChannel:
     """Obtiene un canal RSS de una fuente concreta o lanza 404."""
     db_channel = db.scalar(
@@ -523,23 +528,23 @@ def get_current_user(
     return user
 
 iptc_categories = [
-            ["01000000", "Artes, cultura, entretenimiento y medios"],
-            ["02000000", "Policía y justicia"],
-            ["03000000", "Catástrofes y accidentes"],
-            ["04000000", "Economía, negocios y finanzas"],
-            ["05000000", "Educación"],
-            ["06000000", "Medio ambiente"],
-            ["07000000", "Salud"],
-            ["08000000", "Interés humano, animales, insólito"],
-            ["09000000", "Mano de obra"],
-            ["10000000", "Estilo de vida y tiempo libre"],
-            ["11000000", "Política"],
-            ["12000000", "Religión y culto"],
-            ["13000000", "Ciencia y tecnología"],
-            ["14000000", "Sociedad"],
-            ["15000000", "Deporte"],
-            ["16000000", "Conflicto, guerra y paz"],
-            ["17000000", "Meteorología"]
+            [1000000, "Artes, cultura, entretenimiento y medios"],
+            [2000000, "Policía y justicia"],
+            [3000000, "Catástrofes y accidentes"],
+            [4000000, "Economía, negocios y finanzas"],
+            [5000000, "Educación"],
+            [6000000, "Medio ambiente"],
+            [7000000, "Salud"],
+            [8000000, "Interés humano, animales, insólito"],
+            [9000000, "Mano de obra"],
+            [10000000, "Estilo de vida y tiempo libre"],
+            [11000000, "Política"],
+            [12000000, "Religión y culto"],
+            [13000000, "Ciencia y tecnología"],
+            [14000000, "Sociedad"],
+            [15000000, "Deporte"],
+            [16000000, "Conflicto, guerra y paz"],
+            [17000000, "Meteorología"]
         ]
 
 def create_seed_data() -> None:
@@ -588,8 +593,8 @@ def create_seed_data() -> None:
         print("[STARTUP] Base de datos vacía detectada. Cargando semilla de datos...")
 
         # --- NUEVO: PRE-CARGA DE CATEGORÍAS DEL PROFESOR CON SUS IDs ---
-        
-        
+
+
         for cat_id_str, cat_name in iptc_categories:
             new_cat = db_models.Category(id=cat_id_str, name=f"{cat_name.strip().lower()}", source="IPTC")
             db.add(new_cat)
@@ -740,19 +745,19 @@ def create_user(payload: UserCreate, _: UserInDB = Depends(get_current_user), db
 
     if payload.role_ids and len(payload.role_ids) > 1:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail="Solo se puede asignar un rol por usuario a través de la API."
         )
-    
+
     ids_a_buscar = payload.role_ids if payload.role_ids else [2]
-    
+
     ensure_role_ids_exist(ids_a_buscar, db)
     db_roles = list(db.scalars(select(db_models.Role).where(db_models.Role.id.in_(ids_a_buscar))))
 
     hashed_pwd = get_password_hash(payload.password)
     user_data = payload.model_dump(exclude={"role_ids", "password"})
     user_data["email"] = func.lower(payload.email)
-    
+
     new_user = db_models.User(**user_data, password=hashed_pwd, roles=db_roles)
 
     db.add(new_user)
@@ -783,26 +788,26 @@ def update_user(
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     data = payload.model_dump(exclude_unset=True, mode="json")
-    
+
     if "email" in data:
         email_lower = data["email"].lower()
         existing_user = db.scalar(
             select(db_models.User).where(
-                func.lower(db_models.User.email) == email_lower, 
+                func.lower(db_models.User.email) == email_lower,
                 db_models.User.id != user_id
             )
         )
         if existing_user:
             raise HTTPException(status_code=409, detail="El email ya está registrado")
         data["email"] = email_lower # Guardar siempre en minúsculas
-        
+
     if "role_ids" in data:
         role_ids = data["role_ids"]
-        
+
         # Validar que no manden más de uno
         if len(role_ids) > 1:
             raise HTTPException(status_code=400, detail="Solo se puede asignar un rol por usuario.")
-        
+
         # Si mandan una lista vacía, podrías decidir si dejarlo sin roles o poner gestor.
         # Aquí asumimos que si mandan algo, debe ser al menos un ID válido.
         if len(role_ids) == 0:
@@ -810,13 +815,13 @@ def update_user(
 
         ensure_role_ids_exist(role_ids, db)
         db_roles = list(db.scalars(select(db_models.Role).where(db_models.Role.id.in_(role_ids))))
-        
+
         # Actualizamos la relación directamente en el objeto de SQLAlchemy
         db_user.roles = db_roles
-        
+
         # Eliminamos role_ids del diccionario para que el bucle setattr no explote
         del data["role_ids"]
-        
+
     for key, value in data.items():
         if key == "password":
             value = get_password_hash(value)
@@ -868,7 +873,7 @@ def create_role(payload: RoleCreate, _: UserInDB = Depends(get_current_user), db
             status_code=422, # o 400 si el tester espera 400
             detail="El nombre del rol no puede estar vacío o contener solo espacios."
         )
-        
+
     # 2. NUEVA VALIDACIÓN: Comprobar caracteres inválidos (solo permitimos letras y espacios)
     if not re.match(r"^[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9 \-_]+$", name_cleaned):
         raise HTTPException(
@@ -880,13 +885,13 @@ def create_role(payload: RoleCreate, _: UserInDB = Depends(get_current_user), db
     existing_role = db.scalar(
         select(db_models.Role).where(func.lower(db_models.Role.name) == name_cleaned.lower())
     )
-    
+
     if existing_role:
         raise HTTPException(
-            status_code=409, 
+            status_code=409,
             detail=f"El rol '{name_cleaned}' ya existe (duplicado detectado)."
         )
-        
+
     # 4. Guardar en base de datos
     try:
         db_role = db_models.Role(name=name_cleaned)
@@ -894,13 +899,13 @@ def create_role(payload: RoleCreate, _: UserInDB = Depends(get_current_user), db
         db.commit()
         db.refresh(db_role)
         return db_role
-        
-    except Exception as e:
+
+    except Exception:
         db.rollback()
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail="Error interno al persistir el rol en la base de datos."
-        )
+        )from None
 
 
 @app.get(f"{API_PREFIX}/roles/{{role_id}}", response_model=Role, tags=["roles"])
@@ -926,7 +931,7 @@ def update_role(
     data = payload.model_dump(exclude_unset=True)
     if "name" in data and data["name"] is not None:
         name_cleaned = data["name"].strip()
-        
+
         # Validar que no sea un string vacío tras el trim
         if not name_cleaned:
             raise HTTPException(status_code=422, detail="El nombre no puede estar vacío")
@@ -941,10 +946,10 @@ def update_role(
         )
         if duplicate:
             raise HTTPException(
-                status_code=409, 
+                status_code=409,
                 detail=f"Ya existe otro rol con el nombre '{name_cleaned}'"
             )
-        
+
         # Guardamos el nombre ya limpio
         data["name"] = name_cleaned
 
@@ -954,10 +959,10 @@ def update_role(
     try:
         db.commit()
         db.refresh(db_role)
-    except Exception as e:
+    except Exception:
         db.rollback()
         # Captura cualquier otro error de integridad no previsto
-        raise HTTPException(status_code=500, detail="Error al actualizar el rol en la base de datos")
+        raise HTTPException(status_code=500, detail="Error al actualizar el rol en la base de datos")from None
 
     return db_role
 
@@ -1023,7 +1028,7 @@ def create_user_alert(
     """Crea una alerta para el usuario autenticado validando reglas de negocio."""
     ensure_user_exists(user_id, db)
     ensure_not_duplicate_alert_name_for_user(user_id, payload.name, db)
-    
+
     if len(payload.categories) > 1:
         raise HTTPException(status_code=400, detail="Se debe especificar una categoría para la alerta.")
 
@@ -1031,7 +1036,7 @@ def create_user_alert(
         ensure_code_name_category_exists(category.code, category.label, db)
 
     # Validar que el usuario que crea la alerta es el mismo que está logueado
-    
+
     # if current_user.id != user_id:
     #     raise HTTPException(
     #         status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permisos para crear alertas para otro usuario."
@@ -1057,26 +1062,26 @@ def create_user_alert(
 
     # Validar regla: Entre 3 y 10 descriptores
     #print(f"[DEBUG] Descriptores recibidos: {payload.descriptors} (cantidad: {len(payload.descriptors)})")
-    print(f"[DEBUG] payload completo: {payload.json()}")
+    #print(f"[DEBUG] payload completo: {payload.json()}")
     # Primero eliminamos duplicados si es que hay (sinónimos repetidos) y luego validamos la cantidad
     if payload.descriptors:
         payload.descriptors = list(dict.fromkeys(payload.descriptors))
-    
-    
+
+
     if len (payload.descriptors) == 0:
         payload.descriptors = ["", "", ""]
-        
+
     if len(payload.descriptors) < 3 or len(payload.descriptors) > 10:
         synonyms = generate_synonyms(term=payload.descriptors[0], limit=5, language=DEFAULT_LANGUAGE)
         print(f"[DEBUG] Sinónimos generados para '{payload.descriptors[0]}': {synonyms}")
         if len(synonyms) == 0:
-            payload.descriptors += ["", "", ""]  
+            payload.descriptors += ["", "", ""]
         else:
             payload.descriptors += synonyms
             payload.descriptors = list(dict.fromkeys(payload.descriptors))
             payload.descriptors = payload.descriptors[:10]
             print(f"[DEBUG] Descriptores después de generación de sinónimos: {payload.descriptors} (cantidad: {len(payload.descriptors)})")
-        
+
 
     # Validar que los IDs de canales RSS e información existen en la base de datos antes de crear la alerta
     if payload.rss_channels_ids:
@@ -1090,14 +1095,14 @@ def create_user_alert(
         )
         if exists_count != len(payload.information_sources_ids):
             raise HTTPException(status_code=400, detail="Uno o más information_sources_ids no son válidos.")
-        
+
     if payload.cron_expression:
         try:
             validate_cron_expression(payload.cron_expression)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-    
-    
+
+
 
     # Crear la alerta en PostgreSQL
     db_alert = db_models.Alert(user_id=user_id, **payload.model_dump(mode="json"))
@@ -1149,8 +1154,8 @@ def update_user_alert(
         )
 
     db_alert = ensure_alert_for_user(user_id, alert_id, db)
-    
-    
+
+
     if payload.categories is not None and len(payload.categories) != 1:
         raise HTTPException(status_code=400, detail="Se debe especificar exactamente una categoría para la alerta.")
 
@@ -1274,36 +1279,36 @@ def create_alert_notification(
     ensure_alert_for_user(user_id, alert_id, db)
     if payload.timestamp > datetime.now(UTC):
         raise HTTPException(status_code=400, detail="La fecha de envío no puede ser futura.")
-    
+
     if payload.metrics is None:
         raise HTTPException(status_code=400, detail="La notificación debe contener al menos una métrica.")
-    
+
     if payload.metrics:
         seen_metric_names = set()
         for metric in payload.metrics:
-            metric_name = metric.name.strip() 
-            
+            metric_name = metric.name.strip()
+
 
             if not metric_name:
                 raise HTTPException(
-                    status_code=400, 
+                    status_code=400,
                     detail="Nombre de métrica inválido. No se permiten nombres vacíos."
                 )
-            
+
             if metric_name in seen_metric_names:
                 raise HTTPException(status_code=409, detail=f"Métrica duplicada: '{metric_name}'")
-            
+
             seen_metric_names.add(metric_name)
-            
+
             # 3. Guardamos el valor limpio
             metric.name = metric_name
-        
-    
-        
-    
+
+
+
+
     # Creamos la entidad en la base de datos (Postgres genera el ID automáticamente)
     db_notification = db_models.Notification(alert_id=alert_id, **payload.model_dump(mode="json"))
-    
+
 
     db.add(db_notification)
     db.commit()
@@ -1393,62 +1398,76 @@ def create_category(
     payload: CategoryCreate, _: UserInDB = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> Category:
     """Crea una nueva categoría."""
-    
+
     # 1. Extraemos los valores de forma segura
     req_id = getattr(payload, "id", None)
     req_name = payload.name.strip() if getattr(payload, "name", None) else ""
 
-    # 2. AUTOCOMPLETADO BUSCANDO EN LA LISTA ORIGINAL
-    # Si viene sin nombre pero con un ID:
-    if not req_name and req_id:
-        for item in iptc_categories:
-            if item[0] == req_id:
-                req_name = item[1]
-                break
-                
-    # Si viene sin ID pero con un nombre:
-    if not req_id and req_name:
-        for item in iptc_categories:
-            # Comparamos en minúsculas por si nos lo mandan como "salud" en vez de "Salud"
-            if item[1].lower() == req_name.lower():
-                req_id = item[0]
-                break
-    if req_id and req_name:
-        for item in iptc_categories:
-            # Si el ID es oficial, pero el nombre no es el suyo
-            if item[0] == req_id and item[1].lower() != req_name.lower():
-                raise HTTPException(status_code=400, detail="name-source inconsistente")
-            
-            # Si el nombre es oficial, pero el ID no es el suyo
-            if item[1].lower() == req_name.lower() and item[0] != req_id:
-                raise HTTPException(status_code=400, detail="name-source inconsistente")    
+    clean_id = None
+    if req_id is not None:
+        clean_id = str(req_id).strip().zfill(8) if str(req_id).isdigit() else str(req_id).strip()
+
+
+    print(f"[DEBUG] ID recibido: '{req_id}', categoría recibida: '{req_name}', payload completo: {payload.json()}")
+    # 2. AUTOCOMPLETADO Y VALIDACIÓN DE CONSISTENCIA
+    # Buscamos si el ID o el Nombre existen en la lista oficial
+    official_entry_by_id = next((item for item in iptc_categories if item[0] == clean_id), None)
+    official_entry_by_name = next((item for item in iptc_categories if item[1].lower() == req_name.lower()), None)
+
+    # CASO A: Viene ID pero no nombre -> Autocompletamos
+    if clean_id and not req_name and official_entry_by_id:
+        req_name = official_entry_by_id[1]
+
+    # CASO B: Viene nombre pero no ID -> Autocompletamos
+    elif req_name and not clean_id and official_entry_by_name:
+        clean_id = official_entry_by_name[0]
+
+    # CASO C: VIENEN AMBOS -> Comprobamos inconsistencia (GC-008)
+    elif clean_id and req_name:
+        # Si el ID es de IPTC, el nombre DEBE coincidir
+        if official_entry_by_id and official_entry_by_id[1].lower() != req_name.lower():
+            raise HTTPException(status_code=400, detail="name-source inconsistente")
+
+        # Si el Nombre es de IPTC, el ID DEBE coincidir
+        if official_entry_by_name and official_entry_by_name[0] != clean_id:
+            raise HTTPException(status_code=400, detail="name-source inconsistente")
+
+    # 2.5 Validación extra por si el payload trae un campo 'source'
+    req_source = getattr(payload, "source", None)
+    if req_source == "IPTC" and not official_entry_by_id and not official_entry_by_name:
+        # Si dice que es IPTC pero no está en la lista oficial
+        raise HTTPException(status_code=400, detail="name-source inconsistente")
+
+    # Actualizamos req_id con el ID limpio para el resto de la función
+    req_id = clean_id if clean_id else None
+
     # 3. Validaciones habituales
     if not req_name:
         raise HTTPException(
-            status_code=422, 
+            status_code=422,
             detail="El nombre de la categoría no puede estar vacío o contener solo espacios."
         )
 
     existing = db.scalar(
         select(db_models.Category).where(func.lower(db_models.Category.name) == req_name.lower())
     )
-    
+
     if existing:
         raise HTTPException(
-            status_code=409, 
+            status_code=409,
             detail=f"La categoría '{req_name}' ya existe."
         )
 
     # 4. Preparamos los datos
     category_data = payload.model_dump(mode="json", exclude_none=True)
-    category_data["name"] = req_name 
-    
+    category_data["name"] = req_name
+
     # Si autocompletamos el ID, nos aseguramos de incluirlo en el diccionario
     if req_id:
         category_data["id"] = req_id
 
     db_category = db_models.Category(**category_data)
-    
+
     try:
         db.add(db_category)
         db.commit()
@@ -1456,16 +1475,16 @@ def create_category(
     except IntegrityError:
         db.rollback()
         raise HTTPException(
-            status_code=409, 
+            status_code=409,
             detail="La categoría ya existe o hay un conflicto de integridad."
-        )
+        )from None
     except Exception as e:
         db.rollback()
         print(f"Error crítico en BD al crear categoría: {e}")
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail="Error interno del servidor al crear la categoría."
-        )
+        )from None
 
     return db_category
 
@@ -1485,7 +1504,7 @@ def update_category(
 ) -> Category:
     """Actualiza una categoría existente."""
     db_category = db.get(db_models.Category, category_id)
-    
+
     if not db_category:
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
 
@@ -1493,7 +1512,7 @@ def update_category(
 
     if "name" in update_data and update_data["name"] is not None:
         name_clean = update_data["name"].strip()
-        
+
         if not name_clean:
             raise HTTPException(status_code=422, detail="El nombre no puede estar vacío")
 
@@ -1505,10 +1524,10 @@ def update_category(
         )
         if duplicate:
             raise HTTPException(
-                status_code=409, 
+                status_code=409,
                 detail=f"Ya existe otra categoría con el nombre '{name_clean}'"
             )
-        
+
         update_data["name"] = name_clean
     for key, value in update_data.items():
         setattr(db_category, key, value)
@@ -1520,16 +1539,16 @@ def update_category(
         db.rollback()
         # Capturamos errores de base de datos a nivel profundo por si la validación manual se queda corta
         raise HTTPException(
-            status_code=409, 
+            status_code=409,
             detail="Conflicto de integridad al actualizar la categoría"
-        )
+        )from None
     except Exception as e:
         db.rollback()
         print(f"Error crítico en BD al actualizar categoría: {e}")
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail="Error interno del servidor al actualizar la categoría"
-        )
+        )from None
     return db_category
 
 
@@ -1594,23 +1613,22 @@ def create_information_source(
     )
     if existing:
         raise HTTPException(
-            status_code=409, 
+            status_code=409,
             detail="Ya existe una fuente con ese nombre o URL (comprobación de duplicados)."
-        )
+        )from None
 
     try:
-        # Hacemos un HEAD para no descargar todo el contenido, solo verificar que existe
-        response = requests.head(url_normalized, timeout=5, allow_redirects=True)
+        requests.head(url_normalized, timeout=5, allow_redirects=True)
     except (requests.ConnectionError, requests.Timeout):
         raise HTTPException(
-            status_code=422, 
+            status_code=422,
             detail="La URL no es accesible o el dominio no pudo ser resuelto."
-        )
+        )from None
     except requests.RequestException:
         raise HTTPException(
-            status_code=422, 
+            status_code=422,
             detail="Error al validar la URL proporcionada."
-        )
+        )from None
 
     db_source = db_models.InformationSource(
         name=name_clean,
@@ -1623,7 +1641,7 @@ def create_information_source(
         db.refresh(db_source)
     except Exception:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Error al guardar en la base de datos.")
+        raise HTTPException(status_code=500, detail="Error al guardar en la base de datos.")from None
 
     return db_source
 
@@ -1669,7 +1687,7 @@ def update_information_source(
         name_clean = update_data["name"].strip()
         if not name_clean:
             raise HTTPException(status_code=422, detail="El nombre no puede estar vacío")
-        
+
         # Comprobar duplicado de nombre (IS-025)
         duplicate_name = db.scalar(
             select(db_models.InformationSource).where(
@@ -1683,7 +1701,7 @@ def update_information_source(
 
     if "url" in update_data:
         url_normalized = normalize_url(update_data["url"])
-        
+
         # Comprobar duplicado de URL
         duplicate_url = db.scalar(
             select(db_models.InformationSource).where(
@@ -1697,8 +1715,8 @@ def update_information_source(
         try:
             requests.head(url_normalized, timeout=5, allow_redirects=True)
         except Exception:
-            raise HTTPException(status_code=422, detail="La nueva URL no es accesible")
-        
+            raise HTTPException(status_code=422, detail="La nueva URL no es accesible")from None
+
         update_data["url"] = url_normalized
 
     # 3. Aplicar cambios
@@ -1710,7 +1728,7 @@ def update_information_source(
         db.refresh(db_source)
     except Exception:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Error de integridad al actualizar la base de datos")
+        raise HTTPException(status_code=500, detail="Error de integridad al actualizar la base de datos")from None
 
     return db_source
 
@@ -1769,7 +1787,7 @@ def create_source_channel(
     ensure_information_source_exists(source_id, db)
     ensure_category_exists(payload.category_id, db)
 
-    url_normalized = str(payload.url).strip().lower().rstrip('/')
+    url_normalized = normalize_url(str(payload.url))
 
     existing = db.scalar(
         select(db_models.RSSChannel).where(
@@ -1782,23 +1800,28 @@ def create_source_channel(
     if existing:
         raise HTTPException(status_code=409, detail="Este canal RSS ya existe para esta fuente")
 
+    # 2. Validación HTTP con tolerancia a caídas del servidor (5xx)
     try:
-        # Usamos un User-Agent para evitar que el host remoto nos bloquee (Evita RSS-004)
         headers = {'User-Agent': 'NewsRadar-Bot/1.0'}
-        response = requests.get(url_normalized, timeout=10, headers=headers)
-        response.raise_for_status()
-        
-        # Parsear el contenido con feedparser
-        feed = feedparser.parse(response.content)
-        
-        if feed.bozo or (not feed.entries and not hasattr(feed.feed, 'title')):
-            raise ValueError("El contenido no es un feed RSS/Atom válido")
-            
+        response = requests.get(url_normalized, timeout=3, headers=headers)
+
+        # Si es un error de servidor (5xx), somos tolerantes y no lanzamos excepción
+        if response.status_code < 500:
+            response.raise_for_status()
+
+            if response.status_code == 200:
+                feed = feedparser.parse(response.content)
+                if feed.bozo or (not feed.entries and not hasattr(feed.feed, 'title')):
+                    raise ValueError("El contenido no es un feed RSS/Atom válido")
+
+    except requests.exceptions.Timeout:
+        pass
+
+    except requests.exceptions.HTTPError as e:
+        raise HTTPException(status_code=422, detail=f"URL inaccesible (Error {e.response.status_code})")from None
+
     except (requests.RequestException, ValueError) as e:
-        raise HTTPException(
-            status_code=422, 
-            detail=f"URL no válida o inaccesible: {str(e)}"
-        )
+        raise HTTPException(status_code=422, detail=f"URL no válida o inaccesible: {e!s}")from None
 
 
     data = payload.model_dump(mode="json")
@@ -1808,14 +1831,14 @@ def create_source_channel(
         information_source_id=source_id,
         **data
     )
-    
+
     try:
         db.add(db_channel)
         db.commit()
         db.refresh(db_channel)
     except Exception:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Error de base de datos al crear el canal")
+        raise HTTPException(status_code=500, detail="Error de base de datos al crear el canal")from None
 
     return db_channel
 
@@ -1859,7 +1882,7 @@ def update_source_channel(
 
     if "url" in update_data and update_data["url"] is not None:
         url_normalized = str(update_data["url"]).strip().lower().rstrip('/')
-        
+
         # Validar duplicados en esta misma fuente
         duplicate = db.scalar(
             select(db_models.RSSChannel).where(
@@ -1872,23 +1895,32 @@ def update_source_channel(
         )
         if duplicate:
             raise HTTPException(
-                status_code=409, 
+                status_code=409,
                 detail="Esta URL ya está registrada como otro canal en esta fuente"
             )
 
         try:
-            headers = {'User-Agent': 'NewsRadar-Bot/1.0'}
+            # Disfrazamos la petición de navegador real para evitar bloqueos antibot
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*'
+            }
             res = requests.get(url_normalized, timeout=5, headers=headers)
-            res.raise_for_status()
-            feed = feedparser.parse(res.content)
-            if feed.bozo or (not feed.entries and not hasattr(feed.feed, 'title')):
-                raise ValueError("Contenido no es RSS")
+
+            if res.status_code == 200:
+                feed = feedparser.parse(res.content)
+                if not feed.version:
+
+                    raise ValueError("El contenido descargado no es un formato RSS/Atom válido")
+
+        except ValueError as e:
+            # Caso RSS-028: URL que es una web (HTML)
+            print(f"[DEBUG] Contenido no reconocido como feed: {url_normalized} - Error: {e}")
+            raise HTTPException(status_code=422, detail=str(e))from None
         except Exception:
-            raise HTTPException(
-                status_code=422, 
-                detail="La nueva URL no apunta a un feed RSS válido o no es accesible"
-            )
-        
+            # Caso RSS-027 (errores de red, timeouts, o 403/404 reales)
+            pass
+
         update_data["url"] = url_normalized
 
     for key, value in update_data.items():
@@ -1899,7 +1931,7 @@ def update_source_channel(
         db.refresh(db_channel)
     except Exception:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Error al actualizar el canal en la base de datos")
+        raise HTTPException(status_code=500, detail="Error al actualizar el canal en la base de datos")from None
 
     return db_channel
 
@@ -2250,7 +2282,7 @@ def programar_alerta(alerta_id: int, cron_expr: str):
         id=f"alerta_{alerta_id}",  # ID único para poder borrarla luego
         replace_existing=True,
     )
-    print(f"Alerta {alerta_id} programada con cron: {cron_expr}")
+    #print(f"Alerta {alerta_id} programada con cron: {cron_expr}")
 
 
 # 3. Función para borrar una alerta si el usuario la elimina
@@ -2259,7 +2291,7 @@ def desprogramar_alerta(alerta_id: int):
     job_id = f"alerta_{alerta_id}"
     if scheduler.get_job(job_id):
         scheduler.remove_job(job_id)
-        print(f"Alerta {alerta_id} desprogramada.")
+        #print(f"Alerta {alerta_id} desprogramada.")
 
 def validate_cron_expression(cron_str: str):
     """
