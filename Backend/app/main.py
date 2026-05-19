@@ -595,7 +595,7 @@ def create_seed_data() -> None:
         # --- NUEVO: PRE-CARGA DE CATEGORÍAS DEL PROFESOR CON SUS IDs ---
 
         for cat_id_str, cat_name in iptc_categories:
-            new_cat = db_models.Category(id=cat_id_str, name=cat_name.strip().lower(), source="IPTC")
+            new_cat = db_models.Category(id=cat_id_str, name=str(cat_name).strip().lower(), source="IPTC")
             db.add(new_cat)
         db.commit()
 
@@ -1766,7 +1766,7 @@ def create_source_channel(
         pass
 
     except requests.exceptions.HTTPError as e:
-        status = e.response.status_code if getattr(e, 'response', None) else "Desconocido/Timeout"
+        status = e.response.status_code if getattr(e, 'response', None) is not None else "Desconocido/Timeout"
         raise HTTPException(status_code=422, detail=f"URL inaccesible (Error {status})") from None
 
     except (requests.RequestException, ValueError) as e:
