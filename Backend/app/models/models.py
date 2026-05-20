@@ -65,7 +65,7 @@ class Notification(Base):
     alert_id: Mapped[int] = mapped_column(ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     metrics: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
-    iptc_category: Mapped[str] = mapped_column(String, nullable=False)
+    iptc_category: Mapped[str] = mapped_column(String, nullable=True)
 
     alert: Mapped[Alert] = relationship("Alert", back_populates="notifications")
 
@@ -77,7 +77,9 @@ class Category(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
     source: Mapped[str] = mapped_column(String, default="IPTC", nullable=False)
 
-    channels: Mapped[list[RSSChannel]] = relationship("RSSChannel", back_populates="category")
+    channels: Mapped[list[RSSChannel]] = relationship(
+        "RSSChannel", back_populates="category", cascade="all, delete-orphan"
+    )
 
 
 class InformationSource(Base):

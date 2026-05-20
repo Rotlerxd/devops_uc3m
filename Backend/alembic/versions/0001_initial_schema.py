@@ -116,7 +116,7 @@ def upgrade() -> None:
         sa.Column(
             "metrics", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'[]'::jsonb")
         ),
-        sa.Column("iptc_category", sa.String(), nullable=False),
+        sa.Column("iptc_category", sa.String(), nullable=True),
         sa.ForeignKeyConstraint(["alert_id"], ["alerts.id"], ondelete="CASCADE"),
     )
     op.create_index(op.f("ix_notifications_id"), "notifications", ["id"], unique=False)
