@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-import pytz
+
 import feedparser
+import pytz
 import requests
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -24,7 +26,6 @@ from pydantic import BaseModel, EmailStr, Field, HttpUrl
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-import threading
 
 from app.core.security import (
     ALGORITHM,
@@ -2115,14 +2116,9 @@ def run_alert_matching(alerta_id: int):
             if total_hits > 0:
                 noticias = [hit["_source"] for hit in res["hits"]["hits"]]
 
-                # M1: Enviar Email si hay coincidencias
+
                 usuario = db.get(db_models.User, alert.user_id)
                 if usuario and usuario.email:
-                    # M2: Formato de título estricto
-                    ahora = datetime.now(pytz.timezone("Europe/Madrid"))
-                    fecha_str = ahora.strftime("%d/%m/%Y %H:%M")
-                    asunto = f"Actualización de {alert.name} en {fecha_str}"
-
                     send_alert_email(
                         to_email=usuario.email,
                         alert_name=alert.name,
