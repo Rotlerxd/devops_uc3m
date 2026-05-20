@@ -2116,7 +2116,6 @@ def run_alert_matching(alerta_id: int):
             if total_hits > 0:
                 noticias = [hit["_source"] for hit in res["hits"]["hits"]]
 
-
                 usuario = db.get(db_models.User, alert.user_id)
                 if usuario and usuario.email:
                     send_alert_email(
