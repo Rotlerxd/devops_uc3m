@@ -1050,9 +1050,14 @@ def create_user_alert(
     # Validar regla: Entre 3 y 10 descriptores
     # print(f"[DEBUG] Descriptores recibidos: {payload.descriptors} (cantidad: {len(payload.descriptors)})")
     # print(f"[DEBUG] payload completo: {payload.json()}")
-    # Primero eliminamos duplicados si es que hay (sinónimos repetidos) y luego validamos la cantidad
+    # Limpiar descriptores: quitar vacíos y deduplicar manteniendo el orden
     if payload.descriptors:
-        payload.descriptors = list(dict.fromkeys(payload.descriptors))
+        descriptores_limpios = []
+        for d in payload.descriptors:
+            d_limpio = d.strip()
+            if d_limpio != "" and d_limpio not in descriptores_limpios:
+                descriptores_limpios.append(d_limpio)
+        payload.descriptors = descriptores_limpios
 
     if len(payload.descriptors) == 0:
         payload.descriptors = ["", "", ""]

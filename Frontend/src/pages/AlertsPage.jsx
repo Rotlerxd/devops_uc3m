@@ -35,6 +35,8 @@ export default function AlertsPage() {
     cron_preset: '0 0 * * *',
     cron_expression: '0 0 * * *',
     category_ids: [],
+    information_sources_ids: '', // NUEVO CAMPO
+    rss_channels_ids: '',        // NUEVO CAMPO
   });
 
   const parseDescriptors = (descriptorsRaw) => {
@@ -113,22 +115,40 @@ export default function AlertsPage() {
       return setError('Debes especificar una expresión cron.');
     }
 
-    // Construimos las categorías IPTC seleccionadas (con code + label)
+    // Construimos las categorías IPTC seleccionadas asegurando que el código es TEXTO
     const selectedCategories = categories
       .filter((c) => formData.category_ids.includes(c.id))
-      .map((c) => ({ code: c.source || 'IPTC', label: c.name }));
+      .map((c) => ({ code: String(c.id), label: c.name }));
 
-    const payloadCategories = selectedCategories.length > 0
-      ? selectedCategories
-      : [{ code: 'IPTC', label: 'General' }];
+    // Construimos el payload base
+    const payload = {
+      name: formData.name,
+      descriptors: parsedDescriptors,
+      cron_expression: formData.cron_expression,
+    };
+
+    // Solo enviamos la lista de categorías si has seleccionado alguna
+    if (selectedCategories.length > 0) {
+      payload.categories = selectedCategories;
+    }
+    // Procesamos y añadimos los IDs de fuentes si el usuario ha escrito algo
+    if (formData.information_sources_ids.trim() !== '') {
+      payload.information_sources_ids = formData.information_sources_ids
+        .split(',')
+        .map(id => String(id).trim())
+        .filter(id => id !== '');
+    }
+
+    // Procesamos y añadimos los IDs de canales RSS si el usuario ha escrito algo
+    if (formData.rss_channels_ids.trim() !== '') {
+      payload.rss_channels_ids = formData.rss_channels_ids
+        .split(',')
+        .map(id => String(id).trim())
+        .filter(id => id !== '');
+    }
 
     try {
-      await createAlert(user.id, token, {
-        name: formData.name,
-        descriptors: parsedDescriptors,
-        cron_expression: formData.cron_expression,
-        categories: payloadCategories,
-      });
+      await createAlert(user.id, token, payload);
       setShowModal(false);
       setFormData({
         name: '',
@@ -136,6 +156,8 @@ export default function AlertsPage() {
         cron_preset: '0 0 * * *',
         cron_expression: '0 0 * * *',
         category_ids: [],
+        information_sources_ids: '',
+        rss_channels_ids: '',
       });
       setSynonymSuggestions([]);
       fetchAlerts();
@@ -208,7 +230,6 @@ export default function AlertsPage() {
     }
     hasWarmedSynonymsRef.current = true;
     warmupSynonyms(token).catch((err) => {
-      // El warmup no debe bloquear ni romper la UX del modal de alertas.
       console.warn('[alerts] Synonym warmup failed:', err.message);
     });
   };
@@ -226,7 +247,6 @@ export default function AlertsPage() {
 
   return (
     <div className="container mt-4">
-      {/* Navegación entre secciones */}
       <ul className="nav nav-pills mb-4">
         <li className="nav-item"><Link className="nav-link active" to="/alertas">Alertas</Link></li>
         <li className="nav-item"><Link className="nav-link" to="/fuentes">Fuentes</Link></li>
@@ -404,6 +424,32 @@ export default function AlertsPage() {
                       <small className="text-muted">
                         Formato: min hora día mes día-semana
                       </small>
+                    </div>
+                  </div>
+
+                  {/* NUEVOS CAMPOS: FUENTES Y CANALES RSS */}
+                  <div className="row">
+                    <div className="col-md-6 mb-3">
+                      <label className="form-label">IDs FUENTES DE INFO</label>
+                      <input
+                        type="text"
+                        className="form-control bg-light"
+                        placeholder="Ej: 1, 2, 5 (Opcional)"
+                        value={formData.information_sources_ids}
+                        onChange={(e) => setFormData({ ...formData, information_sources_ids: e.target.value })}
+                      />
+                      <small className="text-muted">Separados por comas.</small>
+                    </div>
+                    <div className="col-md-6 mb-3">
+                      <label className="form-label">IDs CANALES RSS</label>
+                      <input
+                        type="text"
+                        className="form-control bg-light"
+                        placeholder="Ej: 10, 15 (Opcional)"
+                        value={formData.rss_channels_ids}
+                        onChange={(e) => setFormData({ ...formData, rss_channels_ids: e.target.value })}
+                      />
+                      <small className="text-muted">Separados por comas.</small>
                     </div>
                   </div>
 
