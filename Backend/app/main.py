@@ -2128,7 +2128,7 @@ def run_alert_matching(alerta_id: int):
                 db.add(nueva_notif)
                 db.commit()
                 print(f"[RADAR] Alerta disparada: {total_hits} noticias enviadas.")
-                
+
                 usuario = db.get(db_models.User, alert.user_id)
                 if usuario and usuario.email:
                     send_alert_email(
@@ -2138,7 +2138,7 @@ def run_alert_matching(alerta_id: int):
                         category=alert.categories[0]["label"] if alert.categories else "N/A",
                     )
 
-                
+
 
         except Exception as e:
             print(f"[RADAR] Error en búsqueda ES: {e}")
