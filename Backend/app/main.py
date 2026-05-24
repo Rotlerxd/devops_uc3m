@@ -2121,6 +2121,14 @@ def run_alert_matching(alerta_id: int):
             if total_hits > 0:
                 noticias = [hit["_source"] for hit in res["hits"]["hits"]]
 
+                # Registrar notificación en BD
+                nueva_notif = db_models.Notification(
+                    alert_id=alert.id, timestamp=datetime.now(pytz.UTC), iptc_category="Multiple"
+                )
+                db.add(nueva_notif)
+                db.commit()
+                print(f"[RADAR] Alerta disparada: {total_hits} noticias enviadas.")
+                
                 usuario = db.get(db_models.User, alert.user_id)
                 if usuario and usuario.email:
                     send_alert_email(
@@ -2130,13 +2138,7 @@ def run_alert_matching(alerta_id: int):
                         category=alert.categories[0]["label"] if alert.categories else "N/A",
                     )
 
-                # Registrar notificación en BD
-                nueva_notif = db_models.Notification(
-                    alert_id=alert.id, timestamp=datetime.now(pytz.UTC), iptc_category="Multiple"
-                )
-                db.add(nueva_notif)
-                db.commit()
-                print(f"[RADAR] Alerta disparada: {total_hits} noticias enviadas.")
+                
 
         except Exception as e:
             print(f"[RADAR] Error en búsqueda ES: {e}")
