@@ -2138,8 +2138,6 @@ def run_alert_matching(alerta_id: int):
                         category=alert.categories[0]["label"] if alert.categories else "N/A",
                     )
 
-
-
         except Exception as e:
             print(f"[RADAR] Error en búsqueda ES: {e}")
 
