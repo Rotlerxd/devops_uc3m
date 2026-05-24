@@ -100,7 +100,8 @@ def send_verification_email(to_email: str, token: str):
            Verificar mi cuenta
         </a>
         <p><small>Si el botón no funciona, copia y pega este enlace en tu navegador:
-        <br>{verification_link}</small></p>
+        <br>{verification_link}<br>
+        Este enlace expirará en 24 horas.</small></p>
     </div>
     """
     msg.attach(MIMEText(html, "html"))
