@@ -163,6 +163,7 @@ export default function SourcesPage() {
             <table className="table table-hover mb-0">
               <thead className="table-dark">
                 <tr>
+                  <th>ID</th>
                   <th>MEDIO DE COMUNICACIÓN</th>
                   <th>URL PRINCIPAL</th>
                   <th>ACCIONES</th>
@@ -174,6 +175,7 @@ export default function SourcesPage() {
                 ) : (
                   sources.map(source => (
                     <tr key={source.id}>
+                      <td className="align-middle text-muted">{source.id}</td>
                       <td className="align-middle fw-bold">{source.name}</td>
                       <td className="align-middle text-muted">
                         <a href={source.url} target="_blank" rel="noopener noreferrer">{source.url}</a>
@@ -197,6 +199,7 @@ export default function SourcesPage() {
             <table className="table table-hover mb-0">
               <thead className="table-dark">
                 <tr>
+                  <th>ID</th>
                   <th>MEDIO</th>
                   <th>URL DEL CANAL RSS</th>
                   <th>ACCIONES</th>
@@ -208,6 +211,7 @@ export default function SourcesPage() {
                 ) : (
                   allChannels.map(channel => (
                     <tr key={channel.id}>
+                      <td className="align-middle text-muted">{channel.id}</td>
                       <td className="align-middle fw-bold">{channel.sourceName}</td>
                       <td className="align-middle text-muted">
                         <a href={channel.url} target="_blank" rel="noopener noreferrer">{channel.url}</a>
