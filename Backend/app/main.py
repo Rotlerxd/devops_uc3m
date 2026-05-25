@@ -549,6 +549,7 @@ iptc_categories = [
     [17000000, "Meteorología"],
     [11110000, "Sucesos"]
 ]
+intentos = {}
 
 
 def create_seed_data() -> None:
@@ -632,10 +633,6 @@ def create_seed_data() -> None:
                 #     category = db_models.Category(name=cat_name.lower(), source="IPTC")
                 #     db.add(category)
                 #     db.flush()  # Genera el category.id
-                list_channel = db.scalar(select(db_models.RSSChannel).where(information_source_id=source.id))
-                if len(list_channel) >= 5:
-                    print(f"[STARTUP] La fuente '{source.name}' ya tiene 5 canales o más. Omitiendo creación de más canales.")
-                    continue
                 # 3. Crear el canal vinculándolo a la fuente y a la categoría
                 channel = db_models.RSSChannel(
                     information_source_id=source.id,
@@ -655,14 +652,19 @@ def health() -> dict:
     return {"status": "ok", "timestamp": datetime.now(UTC).isoformat()}
 
 
+
 @app.post(f"{API_PREFIX}/auth/login", response_model=TokenResponse, tags=["auth"])
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
     """Autentica credenciales y emite un JWT de acceso."""
     db_user = db.scalar(select(db_models.User).where(db_models.User.email == payload.email))
 
     if db_user is None or not verify_password(payload.password, db_user.password):
+        intentos[payload.email] = intentos.get(payload.email, 0) + 1
+        if intentos[payload.email] >= 3:
+            raise HTTPException(status_code=403, detail="no ")
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
+    intentos[payload.email] = 0
     roles = [role.name.lower() for role in db_user.roles]
     role = "gestor" if "gestor" in roles else roles[0] if roles else "lector"
     token = create_access_token({"sub": db_user.email, "role": role, "type": "access"})
