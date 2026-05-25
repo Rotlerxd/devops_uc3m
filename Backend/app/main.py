@@ -1044,7 +1044,7 @@ def create_user_alert(
     user_alerts_count = (
         db.scalar(select(func.count()).select_from(db_models.Alert).where(db_models.Alert.user_id == user_id)) or 0
     )
-    if user_alerts_count >= 20:
+    if user_alerts_count >= 2:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Límite máximo de 20 alertas alcanzado.")
 
     # Validar regla: Entre 3 y 10 descriptores
