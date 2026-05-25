@@ -36,6 +36,7 @@ from app.core.security import (
     send_alert_email,
     send_verification_email,
     verify_password,
+    send_deni,
 )
 from app.core.synonyms import (
     DEFAULT_LANGUAGE,
@@ -656,15 +657,18 @@ def health() -> dict:
 @app.post(f"{API_PREFIX}/auth/login", response_model=TokenResponse, tags=["auth"])
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
     """Autentica credenciales y emite un JWT de acceso."""
+    if payload.email in intentos and intentos[payload.email] >= 3:
+        send_deni(payload.email)
+        raise HTTPException(status_code=403, detail="Demasiados intentos fallidos. Contacta con soporte.")
     db_user = db.scalar(select(db_models.User).where(db_models.User.email == payload.email))
 
     if db_user is None or not verify_password(payload.password, db_user.password):
         intentos[payload.email] = intentos.get(payload.email, 0) + 1
         if intentos[payload.email] >= 3:
-            raise HTTPException(status_code=403, detail="no ")
+            raise HTTPException(status_code=403, detail="Demasiados intentos fallidos. Contacta con soporte.")
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
-    intentos[payload.email] = 0
+    
     roles = [role.name.lower() for role in db_user.roles]
     role = "gestor" if "gestor" in roles else roles[0] if roles else "lector"
     token = create_access_token({"sub": db_user.email, "role": role, "type": "access"})
