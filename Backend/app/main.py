@@ -547,6 +547,7 @@ iptc_categories = [
     [15000000, "Deporte"],
     [16000000, "Conflicto, guerra y paz"],
     [17000000, "Meteorología"],
+    [11110000, "Sucesos"]
 ]
 
 
@@ -679,7 +680,7 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     hashed_pwd = get_password_hash(payload.password)
 
     if (payload.telefono is not None) and (not re.fullmatch(r"\d{9}", payload.telefono)):
-        raise HTTPException(status_code=400, detail="El número de teléfono debe contener exactamente 9 dígitos.")
+        raise HTTPException(status_code=422, detail="El número de teléfono debe contener exactamente 9 dígitos.")
     
     
     new_user = db_models.User(
