@@ -632,7 +632,10 @@ def create_seed_data() -> None:
                 #     category = db_models.Category(name=cat_name.lower(), source="IPTC")
                 #     db.add(category)
                 #     db.flush()  # Genera el category.id
-
+                list_channel = db.scalar(select(db_models.RSSChannel).where(information_source_id=source.id))
+                if len(list_channel) >= 5:
+                    print(f"[STARTUP] La fuente '{source.name}' ya tiene 5 canales o más. Omitiendo creación de más canales.")
+                    continue
                 # 3. Crear el canal vinculándolo a la fuente y a la categoría
                 channel = db_models.RSSChannel(
                     information_source_id=source.id,
@@ -1605,6 +1608,8 @@ def create_information_source(
 
     db_source = db_models.InformationSource(name=name_clean, url=url_normalized)
 
+    
+    
     try:
         db.add(db_source)
         db.commit()
