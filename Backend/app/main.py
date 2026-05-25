@@ -219,6 +219,7 @@ class UserBase(BaseModel):
     last_name: str = Field(..., min_length=1, max_length=120)
     organization: str = Field(..., min_length=1, max_length=180)
     role_ids: list[int] = Field(default_factory=list)
+    telefono: str | None = Field(None, max_length=9)
 
 
 class UserCreate(UserBase):
@@ -677,6 +678,10 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
 
     hashed_pwd = get_password_hash(payload.password)
 
+    if (payload.telefono is not None) and (not re.fullmatch(r"\d{9}", payload.telefono)):
+        raise HTTPException(status_code=400, detail="El número de teléfono debe contener exactamente 9 dígitos.")
+    
+    
     new_user = db_models.User(
         email=payload.email,
         first_name=payload.first_name,
